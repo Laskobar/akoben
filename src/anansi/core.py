@@ -1,0 +1,437 @@
+import os
+import json
+import requests
+from datetime import datetime
+
+# Importer les agents
+from src.agents.market_analyzer import MarketAnalyzer
+from src.agents.strategy_developer import StrategyDeveloper
+from src.agents.vision.kora import Kora
+from src.agents.execution.mt5_connector import MT5Connector
+
+class Anansi:
+    """
+    Anansi - Le cerveau central du système Akoben
+    """
+    def __init__(self, config=None):
+        self.config = config or {}
+        self.conversation_history = []
+        self.ollama_base_url = "http://localhost:11434/api"
+        
+        # Modèles par défaut
+        self.general_model = self.config.get("general_model", "llama3")
+        self.code_model = self.config.get("code_model", "deepseek-coder")
+        
+        # Initialisation des agents
+        self.agents = self._initialize_agents()
+        
+        print(f"Anansi initialisé avec modèle général: {self.general_model}, modèle code: {self.code_model}")
+        print(f"Agents initialisés: {', '.join(self.agents.keys())}")
+    
+    def _initialize_agents(self):
+        """
+        Initialise les agents spécialisés
+        """
+        agents = {}
+        
+        # Créer les agents avec les fonctions d'appel au LLM appropriées
+        agents["market_analyzer"] = MarketAnalyzer(
+            config=self.config,
+            llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
+        )
+        
+        agents["strategy_developer"] = StrategyDeveloper(
+            config=self.config,
+            llm_caller=lambda prompt: self.call_llm(prompt, self.general_model),
+            code_llm_caller=lambda prompt: self.call_llm(prompt, self.code_model)
+        )
+        
+        agents["vision_kora"] = Kora(
+            config=self.config,
+            llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
+        )
+
+        agents["mt5_connector"] = MT5Connector(
+            config=self.config.get("mt5_config", {}),
+            llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
+        )
+
+        return agents
+    
+    def call_llm(self, prompt, model=None):
+        """
+        Appelle un modèle LLM via Ollama
+        """
+        model = model or self.general_model
+        try:
+            response = requests.post(
+                f"{self.ollama_base_url}/generate",
+                json={"model": model, "prompt": prompt, "stream": False}
+            )
+            response.raise_for_status()
+            return response.json().get("response", "")
+        except Exception as e:
+            print(f"Erreur lors de l'appel à Ollama: {e}")
+            return f"Je ne peux pas répondre pour le moment. Erreur: {str(e)}"
+    
+    def process_instruction(self, instruction):
+        """
+        Traite une instruction utilisateur
+        """
+        # Enregistrer l'instruction dans l'historique
+        self.conversation_history.append({
+            "role": "user",
+            "content": instruction,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Analyser l'instruction
+        task_type = self._analyze_instruction(instruction)
+        
+        # Traiter selon le type de tâche
+        if task_type == "market_analysis":
+            response = self._handle_market_analysis(instruction)
+        elif task_type == "strategy_development":
+            response = self._handle_strategy_development(instruction)
+        elif task_type == "visual_analysis":
+             # Utiliser un chemin absolu pour l'image
+            demo_image_path = os.path.join(os.path.expanduser("~"), "akoben-clean/data/images/2.png")
+            response = self._handle_visual_analysis(instruction, image_path=demo_image_path)
+        elif task_type == "trading_execution":
+            response = self._handle_trading_execution(instruction)
+        elif task_type == "general_question":
+            response = self._handle_general_question(instruction)
+        else:
+            response = self._handle_unknown_instruction(instruction)
+        
+        # Enregistrer la réponse dans l'historique
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": response,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        return response
+    
+    def _analyze_instruction(self, instruction):
+        """
+        Analyse le type d'instruction reçue
+        """
+        prompt = f"""
+        Analyse cette instruction et détermine à quelle catégorie elle appartient:
+        - market_analysis: Analyse du marché, des graphiques, des tendances
+        - strategy_development: Développement ou optimisation de stratégies de trading
+        - visual_analysis: Analyse visuelle d'un graphique ou d'une image
+        - trading_execution: Exécution d'ordres de trading ou gestion de positions
+        - general_question: Question générale sur le trading ou le système
+        - unknown: Autre type d'instruction
+        
+        Instruction: "{instruction}"
+        
+        Réponds uniquement avec la catégorie, sans autre texte.
+        """
+        
+        response = self.call_llm(prompt)
+        return response.strip().lower()
+    
+    def _extract_parameters(self, instruction, task_type):
+        """
+        Extrait les paramètres pertinents de l'instruction
+        """
+        if task_type == "market_analysis":
+            prompt = f"""
+            Extrais les paramètres suivants de cette instruction d'analyse de marché:
+            - instrument: Le nom de l'instrument financier à analyser (par défaut: US30)
+            - timeframe: La temporalité à analyser (M1, M5, M15, H1, H4, D1, etc., par défaut: M1)
+            
+            Instruction: "{instruction}"
+            
+            Réponds au format JSON uniquement, comme ceci:
+            {{
+                "instrument": "nom_de_instrument",
+                "timeframe": "temporalité"
+            }}
+            """
+        elif task_type == "strategy_development":
+            prompt = f"""
+            Extrais les paramètres suivants de cette instruction de développement de stratégie:
+            - strategy_type: Le type de stratégie demandée (mean_reversion, trend_following, breakout, etc.)
+            - instrument: L'instrument financier cible (par défaut: US30)
+            
+            Instruction: "{instruction}"
+            
+            Réponds au format JSON uniquement, comme ceci:
+            {{
+                "strategy_type": "type_de_stratégie",
+                "instrument": "nom_de_instrument"
+            }}
+            """
+        elif task_type == "trading_execution":
+            prompt = f"""
+            Extrais les paramètres suivants de cette instruction d'exécution de trading:
+            - action: L'action à effectuer (buy, sell, close, status)
+            - instrument: L'instrument financier concerné (par défaut: US30)
+            - volume: Le volume de l'ordre (par défaut: 0.01)
+            - price: Le prix d'entrée si spécifié (0 pour ordre au marché)
+            - sl: Le niveau de stop loss si spécifié (0 pour aucun)
+            - tp: Le niveau de take profit si spécifié (0 pour aucun)
+            
+            Instruction: "{instruction}"
+            
+            Réponds au format JSON uniquement, comme ceci:
+            {{
+                "action": "action_à_effectuer",
+                "instrument": "nom_de_instrument",
+                "volume": volume_numérique,
+                "price": prix_numérique,
+                "sl": stop_loss_numérique,
+                "tp": take_profit_numérique
+            }}
+            """
+        else:
+            return {}
+        
+        response = self.call_llm(prompt)
+        try:
+            # Tenter de parser la réponse JSON
+            params = json.loads(response)
+            return params
+        except:
+            # En cas d'échec, retourner des valeurs par défaut
+            if task_type == "market_analysis":
+                return {"instrument": "US30", "timeframe": "M1"}
+            elif task_type == "strategy_development":
+                return {"strategy_type": "mean_reversion", "instrument": "US30"}
+            elif task_type == "trading_execution":
+                return {"action": "status", "instrument": "US30", "volume": 0.01, "price": 0, "sl": 0, "tp": 0}
+            return {}
+    
+    def _handle_market_analysis(self, instruction):
+        """
+        Traite une demande d'analyse de marché
+        """
+        # Extraire les paramètres
+        params = self._extract_parameters(instruction, "market_analysis")
+        
+        # Utiliser l'agent d'analyse de marché
+        result = self.agents["market_analyzer"].analyze_market(
+            instrument=params.get("instrument", "US30"),
+            timeframe=params.get("timeframe", "M1")
+        )
+        
+        return result["analysis"]
+    
+    def _handle_strategy_development(self, instruction):
+        """
+        Traite une demande de développement de stratégie
+        """
+        # Extraire les paramètres
+        params = self._extract_parameters(instruction, "strategy_development")
+        
+        # Utiliser l'agent de développement de stratégie
+        result = self.agents["strategy_developer"].develop_strategy(
+            strategy_type=params.get("strategy_type", "mean_reversion"),
+            instrument=params.get("instrument", "US30")
+        )
+        
+        return f"""
+# Description de la stratégie
+{result['strategy_description']}
+
+# Code Python pour implémentation
+```python
+{result['strategy_code']}
+```
+"""
+    
+    def _handle_visual_analysis(self, instruction, image_path=None):
+        """
+        Traite une demande d'analyse visuelle
+        """
+        if "vision_kora" not in self.agents:
+            return "L'agent de vision n'est pas disponible."
+        
+        if not image_path:
+            return "Aucune image fournie pour l'analyse. Veuillez spécifier un chemin d'image."
+        
+        # Utiliser l'agent Kora pour analyser l'image
+        result = self.agents["vision_kora"].analyze_chart(image_path=image_path)
+        
+        if "error" in result:
+            return f"Erreur lors de l'analyse de l'image: {result['error']}"
+        
+        # Créer un rapport d'analyse combinant les détections et l'analyse
+        detections_summary = self._summarize_detections(result["detections"])
+        
+        report = f"""
+# Analyse du Graphique de Trading
+
+## Informations sur l'Image
+- Source: {result['image_info']['source']}
+- Dimensions: {result['image_info']['size'][0]}x{result['image_info']['size'][1]}
+- Format: {result['image_info']['format']}
+
+## Éléments Détectés
+{detections_summary}
+
+## Analyse
+{result['analysis']}
+"""
+        
+        return report
+
+    def _handle_trading_execution(self, instruction):
+        """
+        Traite une demande d'exécution de trading
+        """
+        if "mt5_connector" not in self.agents:
+            return "L'agent de connexion MT5 n'est pas disponible."
+        
+        # Extraction des paramètres
+        params = self._extract_parameters(instruction, "trading_execution")
+        
+        action = params.get("action", "status").lower()
+        instrument = params.get("instrument", "US30")
+        volume = params.get("volume", 0.01)
+        price = params.get("price", 0)
+        sl = params.get("sl", 0)
+        tp = params.get("tp", 0)
+        
+        # Exécuter l'action demandée
+        if action == "status":
+            # Vérifier la connexion MT5
+            if not self.agents["mt5_connector"].connect():
+                return "Impossible de se connecter à MetaTrader 5. Veuillez vérifier l'installation."
+            
+            # Récupérer les informations de compte
+            account_info = self.agents["mt5_connector"].get_account_info()
+            if account_info:
+                account_details = f"""
+# Informations de Compte MT5
+- Compte: {account_info.get('login')}
+- Serveur: {account_info.get('server')}
+- Balance: {account_info.get('balance')} {account_info.get('currency')}
+- Équité: {account_info.get('equity')} {account_info.get('currency')}
+- Margin libre: {account_info.get('free_margin')} {account_info.get('currency')}
+- Niveau de margin: {account_info.get('margin_level')}%
+- Levier: 1:{account_info.get('leverage')}
+"""
+            else:
+                account_details = "Impossible de récupérer les informations du compte."
+            
+            # Récupérer les positions ouvertes
+            positions = self.agents["mt5_connector"].get_positions()
+            positions_details = "## Positions Ouvertes\n"
+            if positions and len(positions) > 0:
+                for pos in positions:
+                    positions_details += f"- {pos['symbol']} {pos['type']} {pos['volume']} lot(s) @ {pos['open_price']} (Profit: {pos['profit']})\n"
+            else:
+                positions_details += "Aucune position ouverte.\n"
+            
+            return f"{account_details}\n{positions_details}"
+            
+        elif action == "buy":
+            result = self.agents["mt5_connector"].place_order(
+                symbol=instrument,
+                order_type="BUY",
+                volume=volume,
+                price=price,
+                sl=sl,
+                tp=tp,
+                comment="Akoben Trading System"
+            )
+            
+            if result:
+                return f"Ordre d'achat placé avec succès. ID: {result.get('order_id')}, Volume: {result.get('volume')}, Prix: {result.get('price')}"
+            else:
+                return "Échec de l'ordre d'achat. Veuillez vérifier les paramètres et réessayer."
+                
+        elif action == "sell":
+            result = self.agents["mt5_connector"].place_order(
+                symbol=instrument,
+                order_type="SELL",
+                volume=volume,
+                price=price,
+                sl=sl,
+                tp=tp,
+                comment="Akoben Trading System"
+            )
+            
+            if result:
+                return f"Ordre de vente placé avec succès. ID: {result.get('order_id')}, Volume: {result.get('volume')}, Prix: {result.get('price')}"
+            else:
+                return "Échec de l'ordre de vente. Veuillez vérifier les paramètres et réessayer."
+                
+        elif action == "close":
+            if instrument.lower() == "all":
+                success = self.agents["mt5_connector"].close_all_positions()
+                if success:
+                    return "Toutes les positions ont été fermées avec succès."
+                else:
+                    return "Échec de fermeture de certaines positions."
+            else:
+                success = self.agents["mt5_connector"].close_position(symbol=instrument)
+                if success:
+                    return f"Position {instrument} fermée avec succès."
+                else:
+                    return f"Échec de fermeture de la position {instrument}."
+        else:
+            return f"Action '{action}' non reconnue. Actions disponibles: status, buy, sell, close."
+
+    def _summarize_detections(self, detections):
+        """
+        Résume les détections en format texte
+        """
+        summary = ""
+        
+        if detections.get("candles"):
+            summary += "### Bougies Japonaises\n"
+            for candle in detections["candles"]:
+                summary += f"- {candle['type'].capitalize()} (confiance: {candle['confidence']:.2f})\n"
+            summary += "\n"
+        
+        if detections.get("indicators"):
+            summary += "### Indicateurs Techniques\n"
+            for indicator in detections["indicators"]:
+                summary += f"- {indicator['type'].replace('_', ' ').capitalize()} (confiance: {indicator['confidence']:.2f})\n"
+            summary += "\n"
+        
+        if detections.get("patterns"):
+            summary += "### Patterns Détectés\n"
+            for pattern in detections["patterns"]:
+                summary += f"- {pattern['type'].replace('_', ' ').capitalize()} (confiance: {pattern['confidence']:.2f})\n"
+            summary += "\n"
+        
+        return summary
+    
+    def _handle_general_question(self, instruction):
+        """
+        Traite une question générale
+        """
+        prompt = f"""
+        En tant qu'assistant spécialisé en trading algorithmique, réponds à cette question:
+        
+        "{instruction}"
+        
+        Fournis une réponse claire et informative.
+        """
+        return self.call_llm(prompt)
+    
+    def _handle_unknown_instruction(self, instruction):
+        """
+        Traite une instruction non reconnue
+        """
+        return f"""
+        Je ne suis pas sûr de comprendre cette instruction. Pourriez-vous la reformuler ou préciser si vous souhaitez:
+        - Une analyse de marché
+        - Le développement d'une stratégie de trading
+        - Une analyse visuelle d'un graphique
+        - Une exécution d'ordre de trading
+        - Une réponse à une question générale sur le trading
+        """
+    
+    def get_conversation_history(self):
+        """
+        Retourne l'historique de conversation
+        """
+        return self.conversation_history
