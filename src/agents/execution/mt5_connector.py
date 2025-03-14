@@ -1,5 +1,5 @@
 """
-MT5 File Connector (Agent Fihavanana)
+MT5 Connector (Agent Fihavanana)
 Équipe: Ubuntu (Support)
 Rôle: Exécution des ordres de trading et connexion avec MetaTrader 5 via échange de fichiers
 """
@@ -8,6 +8,7 @@ import os
 import time
 import json
 import codecs
+import uuid
 import pandas as pd
 from datetime import datetime
 
@@ -55,20 +56,11 @@ class MT5FileConnector:
                     print(f"Contenu du fichier de réponse: '{content}'")
                     if content == "READY":
                         print("MT5 est prêt (READY trouvé)")
+                        self.connected = True
+                        return True
             else:
                 print("Fichier de réponse non trouvé - MT5 n'est peut-être pas en cours d'exécution")
                 return False
-            
-            # Test de communication - Envoyer PING
-            response = self.send_command("PING")
-            if response == "PONG":
-                self.connected = True
-                print("Connexion à MetaTrader 5 établie et vérifiée (PING-PONG réussi)")
-                return True
-            else:
-                print(f"Échec de la vérification de connexion: {response}")
-                return False
-                
         except Exception as e:
             print(f"Erreur lors de la connexion à MetaTrader 5: {e}")
             return False
@@ -90,11 +82,21 @@ class MT5FileConnector:
         timeout = timeout or self.timeout
         
         try:
-            print(f"Envoi de la commande: '{command}'")
+            # Générer un ID unique pour cette commande
+            command_id = str(uuid.uuid4())[:8]
+            tagged_command = f"ID:{command_id}|{command}"
+            print(f"Envoi de la commande: '{tagged_command}'")
             
-            # Écrire la commande dans le fichier de requête
+            # S'assurer que le fichier de réponse est prêt pour une nouvelle commande
+            with codecs.open(self.response_file, 'w', encoding=self.encoding) as f:
+                f.write("READY")
+            
+            # Attendre un court instant pour que l'EA puisse lire "READY"
+            time.sleep(0.5)
+            
+            # Écrire la commande avec son ID dans le fichier de requête
             with codecs.open(self.request_file, 'w', encoding=self.encoding) as f:
-                f.write(command)
+                f.write(tagged_command)
             print(f"Commande écrite dans {self.request_file}")
             
             # Attendre la réponse avec un timeout
@@ -103,9 +105,25 @@ class MT5FileConnector:
                 if os.path.exists(self.response_file):
                     with codecs.open(self.response_file, 'r', encoding=self.encoding, errors='ignore') as f:
                         response = f.read().strip()
+                        
+                        # Vérifier si la réponse contient l'ID et n'est pas READY
                         if response and response != "READY":
-                            print(f"Réponse reçue: '{response}'")
-                            return response
+                            # Extraire l'ID et le contenu de la réponse
+                            if response.startswith("ID:") and "|" in response:
+                                parts = response.split("|", 1)
+                                response_id = parts[0][3:]  # Ignorer "ID:" au début
+                                content = parts[1]
+                                
+                                # Vérifier que l'ID correspond
+                                if response_id == command_id:
+                                    print(f"Réponse reçue avec ID correspondant: '{content}'")
+                                    return content
+                                else:
+                                    print(f"ID de réponse non correspondant: attendu {command_id}, reçu {response_id}")
+                            else:
+                                # Compatibilité avec l'ancien format sans ID
+                                print(f"Réponse reçue (ancien format): '{response}'")
+                                return response
                 time.sleep(0.1)
             
             print(f"Timeout atteint ({timeout}s) sans réponse")
@@ -121,9 +139,6 @@ class MT5FileConnector:
         Returns:
             dict: Informations du compte ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
         response = self.send_command("ACCOUNT_INFO")
         
         # Analyse de la réponse
@@ -158,8 +173,9 @@ class MT5FileConnector:
         Returns:
             dict: Prix bid et ask ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
+        # Ajustement pour US30
+        if symbol.lower() == "us30":
+            symbol = "US30.cash"
         
         response = self.send_command(f"PRICE {symbol}")
         
@@ -197,15 +213,16 @@ class MT5FileConnector:
         Returns:
             pandas.DataFrame: Données historiques ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         response = self.send_command(f"DATA {symbol} {timeframe} {count}")
         
         if response.startswith("DATA"):
             try:
                 # Extraire les données JSON
-                json_start = response.find("{")
+                json_start = response.find("[")
                 if json_start != -1:
                     json_data = response[json_start:]
                     data = json.loads(json_data)
@@ -246,9 +263,10 @@ class MT5FileConnector:
         Returns:
             dict: Résultat de l'exécution de l'ordre ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         command = f"ORDER {symbol} {order_type} {volume} {price} {sl} {tp} {magic} {comment}"
         response = self.send_command(command)
         
@@ -285,9 +303,10 @@ class MT5FileConnector:
         Returns:
             bool: True si la fermeture est réussie, False sinon
         """
-        if not self.connected and not self.connect():
-            return False
-        
+        # Ajustement pour US30
+        if symbol and symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         if position_id is not None:
             command = f"CLOSE_POSITION ID={position_id}"
         elif symbol is not None:
@@ -311,9 +330,6 @@ class MT5FileConnector:
         Returns:
             bool: True si toutes les fermetures sont réussies, False sinon
         """
-        if not self.connected and not self.connect():
-            return False
-        
         response = self.send_command("CLOSE_ALL_POSITIONS")
         
         if response.startswith("POSITIONS_CLOSED"):
@@ -337,9 +353,10 @@ class MT5FileConnector:
         Returns:
             list: Liste des positions ouvertes ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol and symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         command = "POSITIONS"
         if symbol:
             command += f" {symbol}"
@@ -379,9 +396,10 @@ class MT5FileConnector:
         Returns:
             float: Taille de position recommandée ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         command = f"POSITION_SIZE {symbol} {stop_loss_pips} {risk_percent}"
         response = self.send_command(command)
         
@@ -407,9 +425,10 @@ class MT5FileConnector:
         Returns:
             list: Liste des ordres historiques ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol and symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         command = f"HISTORY_ORDERS {days}"
         if symbol:
             command += f" {symbol}"
@@ -448,9 +467,10 @@ class MT5FileConnector:
         Returns:
             dict: Métriques de performance ou None en cas d'échec
         """
-        if not self.connected and not self.connect():
-            return None
-        
+        # Ajustement pour US30
+        if symbol and symbol.lower() == "us30":
+            symbol = "US30.cash"
+            
         command = f"PERFORMANCE {days}"
         if symbol:
             command += f" {symbol}"

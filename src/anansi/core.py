@@ -7,7 +7,7 @@ from datetime import datetime
 from src.agents.market_analyzer import MarketAnalyzer
 from src.agents.strategy_developer import StrategyDeveloper
 from src.agents.vision.kora import Kora
-from src.agents.execution.mt5_connector import MT5Connector
+from src.agents.execution.mt5_connector import MT5FileConnector
 
 class Anansi:
     """
@@ -51,7 +51,7 @@ class Anansi:
             llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
         )
 
-        agents["mt5_connector"] = MT5Connector(
+        agents["mt5_connector"] = MT5FileConnector(
             config=self.config.get("mt5_config", {}),
             llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
         )
@@ -297,6 +297,15 @@ class Anansi:
         sl = params.get("sl", 0)
         tp = params.get("tp", 0)
         
+        # Réinitialiser le fichier de réponse pour garantir une communication propre
+        try:
+            mt5_path = os.path.expanduser("~/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files")
+            response_file = os.path.join(mt5_path, "responses.txt")
+            with open(response_file, 'w', encoding='latin-1') as f:
+                f.write("READY")
+        except Exception as e:
+            print(f"Avertissement: Impossible de réinitialiser le fichier de réponse: {e}")
+        
         # Exécuter l'action demandée
         if action == "status":
             # Vérifier la connexion MT5
@@ -331,34 +340,76 @@ class Anansi:
             return f"{account_details}\n{positions_details}"
             
         elif action == "buy":
+            # Récupérer le prix actuel pour le calcul des SL/TP relatifs si nécessaire
+            current_price = None
+            if sl != 0 or tp != 0:
+                price_data = self.agents["mt5_connector"].get_current_price(instrument)
+                if price_data:
+                    current_price = price_data.get("ask")
+            
+            # Convertir SL/TP relatifs en absolus si nécessaire
+            sl_absolute = sl
+            tp_absolute = tp
+            if current_price and sl < 0:  # SL relatif en points négatifs
+                sl_absolute = current_price + sl * 0.1  # Convertir points en prix
+            if current_price and tp > 0:  # TP relatif en points positifs
+                tp_absolute = current_price + tp * 0.1  # Convertir points en prix
+            
             result = self.agents["mt5_connector"].place_order(
                 symbol=instrument,
                 order_type="BUY",
                 volume=volume,
                 price=price,
-                sl=sl,
-                tp=tp,
+                sl=sl_absolute,
+                tp=tp_absolute,
                 comment="Akoben Trading System"
             )
             
             if result:
-                return f"Ordre d'achat placé avec succès. ID: {result.get('order_id')}, Volume: {result.get('volume')}, Prix: {result.get('price')}"
+                return f"""
+# Ordre d'achat placé avec succès
+- Instrument: {instrument}
+- Volume: {result.get('volume')} lot(s)
+- Prix d'exécution: {result.get('price')}
+- ID de l'ordre: {result.get('order_id')}
+"""
             else:
                 return "Échec de l'ordre d'achat. Veuillez vérifier les paramètres et réessayer."
                 
         elif action == "sell":
+            # Récupérer le prix actuel pour le calcul des SL/TP relatifs si nécessaire
+            current_price = None
+            if sl != 0 or tp != 0:
+                price_data = self.agents["mt5_connector"].get_current_price(instrument)
+                if price_data:
+                    current_price = price_data.get("bid")
+            
+            # Convertir SL/TP relatifs en absolus si nécessaire
+            sl_absolute = sl
+            tp_absolute = tp
+            if current_price and sl > 0:  # SL relatif en points positifs
+                sl_absolute = current_price - sl * 0.1  # Convertir points en prix
+            if current_price and tp < 0:  # TP relatif en points négatifs
+                tp_absolute = current_price - abs(tp) * 0.1  # Convertir points en prix
+            
             result = self.agents["mt5_connector"].place_order(
                 symbol=instrument,
                 order_type="SELL",
                 volume=volume,
                 price=price,
-                sl=sl,
-                tp=tp,
+                sl=sl_absolute,
+                tp=tp_absolute,
                 comment="Akoben Trading System"
             )
             
             if result:
-                return f"Ordre de vente placé avec succès. ID: {result.get('order_id')}, Volume: {result.get('volume')}, Prix: {result.get('price')}"
+                return f"""
+# Ordre de vente placé avec succès
+- Instrument: {instrument}
+- Volume: {result.get('volume')} lot(s)
+- Prix d'exécution: {result.get('price')}
+- ID de l'ordre: {result.get('order_id')}
+"""
             else:
                 return "Échec de l'ordre de vente. Veuillez vérifier les paramètres et réessayer."
                 
@@ -375,8 +426,72 @@ class Anansi:
                     return f"Position {instrument} fermée avec succès."
                 else:
                     return f"Échec de fermeture de la position {instrument}."
+                    
+        elif action == "price":
+            # Action spéciale pour obtenir juste le prix actuel
+            price_data = self.agents["mt5_connector"].get_current_price(instrument)
+            if price_data:
+                return f"""
+# Prix Actuel de {instrument}
+- Bid (Vente): {price_data.get('bid')}
+- Ask (Achat): {price_data.get('ask')}
+- Spread: {price_data.get('spread')}
+- Timestamp: {price_data.get('time').strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            else:
+                return f"Impossible d'obtenir le prix actuel pour {instrument}."
+                
+        elif action == "performance":
+            # Action pour obtenir les métriques de performance
+            days = params.get("days", 30)  # Par défaut, 30 jours
+            metrics = self.agents["mt5_connector"].calculate_performance_metrics(days, instrument if instrument != "all" else None)
+            
+            if metrics:
+                return f"""
+# Métriques de Performance ({days} jours)
+- Total trades: {metrics.get('total_trades')}
+- Trades gagnants: {metrics.get('winning_trades')}
+- Trades perdants: {metrics.get('losing_trades')}
+- Win rate: {metrics.get('win_rate')}%
+- Profit factor: {metrics.get('profit_factor')}
+- Profit total: {metrics.get('total_profit')}
+- Profit moyen par trade: {metrics.get('average_trade')}
+"""
+            else:
+                return f"Impossible d'obtenir les métriques de performance."
+        
+        elif action == "history":
+            # Action pour obtenir l'historique des ordres
+            days = params.get("days", 7)  # Par défaut, 7 jours
+            history = self.agents["mt5_connector"].get_history_orders(days, instrument if instrument != "all" else None)
+            
+            if history and len(history) > 0:
+                history_text = "# Historique des Ordres\n"
+                for order in history:
+                    history_text += f"- ID: {order.get('ticket')}, {order.get('symbol')} {order.get('type')}, Volume: {order.get('volume')}\n"
+                return history_text
+            else:
+                return "Aucun ordre dans l'historique pour la période spécifiée."
+        
+        elif action == "size":
+            # Action pour calculer la taille de position optimale
+            stop_loss_pips = params.get("sl", 100)  # Par défaut, 100 pips
+            risk_percent = params.get("risk", 1)  # Par défaut, 1% de risque
+            
+            size = self.agents["mt5_connector"].calculate_position_size(instrument, stop_loss_pips, risk_percent)
+            
+            if size is not None:
+                return f"""
+# Calcul de Taille de Position
+- Instrument: {instrument}
+- Stop Loss: {stop_loss_pips} pips
+- Risque: {risk_percent}% du compte
+- Taille recommandée: {size} lot(s)
+"""
+            else:
+                return "Impossible de calculer la taille de position."
         else:
-            return f"Action '{action}' non reconnue. Actions disponibles: status, buy, sell, close."
+            return f"Action '{action}' non reconnue. Actions disponibles: status, buy, sell, close, price, performance, history, size."
 
     def _summarize_detections(self, detections):
         """
