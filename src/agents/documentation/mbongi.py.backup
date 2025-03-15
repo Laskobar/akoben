@@ -4,13 +4,16 @@ Adapté du projet Eliza pour Akoben.
 Permet la documentation automatique du code, le suivi du développement et la gestion des connaissances.
 """
 
+# Lignes à mettre au début du fichier mbongi.py, remplaçant les imports de datetime existants
+
 import os
 import sys
 import json
 import re
-import datetime
 import time
+import datetime  # Importez le module datetime (sans from)
 
+# Importez ensuite les classes spécifiques dont vous avez besoin
 from typing import Dict, List, Any, Optional, Union, Tuple
 import threading
 

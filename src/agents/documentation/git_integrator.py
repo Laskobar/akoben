@@ -1,492 +1,816 @@
-"""
-Module d'intégration Git pour Mbongi.
-Permet de suivre et d'enregistrer les modifications du code avec Git.
-"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import os
-import subprocess
 import re
 import time
+import git
 import logging
-from typing import Dict, List, Any, Optional, Tuple, Set
 from datetime import datetime
+from typing import Dict, List, Any, Optional, Union
 
 class GitIntegrator:
     """
-    Intégrateur Git pour Mbongi.
-    Gère les interactions avec Git pour suivre les modifications du code.
+    Composant de Mbongi pour l'intégration avec Git.
+    Permet de suivre les modifications, générer des commit messages intelligents,
+    et synchroniser avec le dépôt distant.
     """
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialise l'intégrateur Git.
+        Initialise le GitIntegrator avec une configuration donnée.
         
         Args:
-            config: Dictionnaire de configuration optionnel
+            config: Dictionnaire de configuration contenant:
+                - repo_path: Chemin vers le dépôt Git
+                - remote_name: Nom du remote (default: "origin")
+                - default_branch: Branche par défaut (default: "main")
+                - auto_commit: Activer les commits automatiques (default: False)
+                - auto_push: Activer les push automatiques (default: False)
+                - commit_interval: Intervalle entre les commits en secondes (default: 3600)
+                - message_template: Template pour les messages de commit (default: "MBONGI: {message}")
+                - tracked_extensions: Extensions des fichiers à suivre (default: [".py", ".md"])
+                - username: Nom d'utilisateur Git (optionnel)
+                - email: Email Git (optionnel)
+                - github_token: Token GitHub pour l'authentification (optionnel)
         """
-        self.config = config or {}
-        self.repo_path = self.config.get('repo_path', '.')
-        self.branches = self.config.get('branches', {
-            'main': 'main',
-            'development': 'development'
-        })
-        self.current_branch = None
-        self.auto_commit = self.config.get('auto_commit', True)
-        self.auto_push = self.config.get('auto_push', False)
-        self.commit_interval = self.config.get('commit_interval', 3600)  # 1 heure par défaut
-        self.last_commit_time = None
+        self.config = {
+            "remote_name": "origin",
+            "default_branch": "main",
+            "auto_commit": False,
+            "auto_push": False,
+            "commit_interval": 3600,  # 1 heure
+            "message_template": "MBONGI: {message}",
+            "tracked_extensions": [".py", ".md", ".txt", ".yaml", ".yml", ".json"],
+        }
+        self.config.update(config)
         
-        # Configuration du logging
-        self.log_dir = self.config.get('log_dir', 'logs')
-        os.makedirs(self.log_dir, exist_ok=True)
+        # Validation des chemins
+        self.repo_path = self.config.get("repo_path")
+        if not self.repo_path or not os.path.exists(self.repo_path):
+            raise ValueError(f"Chemin du dépôt invalide: {self.repo_path}")
         
-        self.logger = logging.getLogger('GitIntegrator')
-        self.logger.setLevel(logging.INFO)
-        
-        # Handler pour fichier
-        log_file = os.path.join(self.log_dir, 'git_integrator.log')
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.INFO)
-        
-        # Handler pour console
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # Format
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        # Ajouter les handlers
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-        
-        # Vérifier que le dépôt est bien initialisé
-        self._ensure_git_repo()
-        
-        # Déterminer la branche courante
-        self.current_branch = self._get_current_branch()
-        self.logger.info(f"Intégrateur Git initialisé sur la branche '{self.current_branch}'")
-    
-    def _ensure_git_repo(self) -> bool:
-        """
-        Vérifie que le dépôt Git est bien initialisé et le crée si nécessaire.
-        
-        Returns:
-            True si le dépôt est correctement initialisé
-        """
-        git_dir = os.path.join(self.repo_path, '.git')
-        
-        if not os.path.exists(git_dir):
-            self.logger.warning(f"Aucun dépôt Git trouvé dans {self.repo_path}")
-            
-            try:
-                self._run_git_command(['init'])
-                self.logger.info(f"Dépôt Git initialisé dans {self.repo_path}")
-                
-                # Créer un commit initial
-                self._create_git_ignore()
-                self._run_git_command(['add', '.gitignore'])
-                self._run_git_command(['commit', '-m', 'Initial commit'])
-                
-                return True
-            except Exception as e:
-                self.logger.error(f"Erreur lors de l'initialisation du dépôt Git: {str(e)}")
-                return False
-        
-        return True
-    
-    def _create_git_ignore(self) -> None:
-        """Crée un fichier .gitignore standard."""
-        gitignore_content = """# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
-venv/
-ENV/
-env/
-
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Logs
-logs/
-*.log
-
-# Documentation générée
-docs/generated/
-
-# Spécifiques au projet
-/docs/knowledge_base/
-/data/learning/
-"""
-        
-        gitignore_path = os.path.join(self.repo_path, '.gitignore')
-        
-        # Ne pas écraser un .gitignore existant
-        if not os.path.exists(gitignore_path):
-            with open(gitignore_path, 'w') as f:
-                f.write(gitignore_content)
-            
-            self.logger.info("Fichier .gitignore créé")
-    
-    def _run_git_command(self, command: List[str]) -> str:
-        """
-        Exécute une commande Git et renvoie sa sortie.
-        
-        Args:
-            command: Liste contenant la commande Git et ses arguments
-            
-        Returns:
-            Sortie de la commande
-            
-        Raises:
-            Exception: Si la commande échoue
-        """
-        full_command = ['git', '-C', self.repo_path] + command
-        
+        # Initialisation du repo Git
         try:
-            result = subprocess.run(
-                full_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            error_message = f"Erreur lors de l'exécution de 'git {' '.join(command)}': {e.stderr.strip()}"
-            self.logger.error(error_message)
-            raise Exception(error_message)
-    
-    def _get_current_branch(self) -> str:
-        """
-        Détermine la branche Git courante.
+            self.repo = git.Repo(self.repo_path)
+            logging.info(f"Dépôt Git initialisé à {self.repo_path}")
+        except git.InvalidGitRepositoryError:
+            logging.warning(f"{self.repo_path} n'est pas un dépôt Git valide. Initialisation d'un nouveau dépôt.")
+            self.repo = git.Repo.init(self.repo_path)
+            logging.info(f"Nouveau dépôt Git initialisé à {self.repo_path}")
         
-        Returns:
-            Nom de la branche courante
-        """
-        try:
-            branch = self._run_git_command(['rev-parse', '--abbrev-ref', 'HEAD'])
-            return branch
-        except Exception:
-            # En cas d'erreur, supposer que nous sommes sur la branche principale
-            return self.branches.get('main', 'main')
-    
-    def _get_unstaged_changes(self) -> List[str]:
-        """
-        Récupère la liste des fichiers modifiés non stagés.
+        # État interne
+        self.last_commit_time = time.time()
+        self.auto_tracking_enabled = False
+        self.commit_rules = {}
+        self.file_cache = {}
+        self.init_file_cache()
         
-        Returns:
-            Liste des chemins de fichiers modifiés
-        """
-        try:
-            output = self._run_git_command(['status', '--porcelain'])
-            
-            changes = []
-            for line in output.split('\n'):
-                if line.strip():
-                    # Extraire le statut et le chemin du fichier
-                    status = line[:2].strip()
-                    file_path = line[3:].strip()
-                    
-                    # Ignorer les fichiers déjà stagés (A, M, R, C dans la première colonne)
-                    if status[0] not in ['A', 'M', 'R', 'C']:
-                        changes.append(file_path)
-            
-            return changes
-        except Exception as e:
-            self.logger.error(f"Erreur lors de la récupération des changements: {str(e)}")
-            return []
+        logging.info("GitIntegrator initialisé")
     
-    def check_changes(self) -> Dict[str, List[str]]:
+    def init_file_cache(self) -> None:
         """
-        Vérifie les changements dans le dépôt.
-        
-        Returns:
-            Dictionnaire avec les différents types de changements
+        Initialise le cache des fichiers pour suivre les modifications.
         """
-        try:
-            # Récupérer l'état du dépôt
-            status_output = self._run_git_command(['status', '--porcelain'])
+        self.file_cache = {}
+        for root, _, files in os.walk(self.repo_path):
+            # Ignorer les dossiers .git et autres dossiers exclus
+            if ".git" in root or any(excluded in root for excluded in [
+                "__pycache__", "venv", ".vscode", "node_modules"
+            ]):
+                continue
             
-            changes = {
-                'modified': [],
-                'added': [],
-                'deleted': [],
-                'renamed': [],
-                'untracked': []
-            }
-            
-            # Analyser la sortie
-            for line in status_output.split('\n'):
-                if not line.strip():
+            for file in files:
+                # Vérifier si l'extension est dans les extensions suivies
+                ext = os.path.splitext(file)[1]
+                if ext not in self.config["tracked_extensions"]:
                     continue
                 
-                status = line[:2]
-                file_path = line[3:].strip()
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, self.repo_path)
                 
-                if status.startswith('M'):
-                    changes['modified'].append(file_path)
-                elif status.startswith('A'):
-                    changes['added'].append(file_path)
-                elif status.startswith('D'):
-                    changes['deleted'].append(file_path)
-                elif status.startswith('R'):
-                    changes['renamed'].append(file_path)
-                elif status.startswith('??'):
-                    changes['untracked'].append(file_path)
-            
-            return changes
-        except Exception as e:
-            self.logger.error(f"Erreur lors de la vérification des changements: {str(e)}")
-            return {'error': [str(e)]}
+                try:
+                    mtime = os.path.getmtime(file_path)
+                    self.file_cache[rel_path] = {
+                        "mtime": mtime,
+                        "last_checked": time.time()
+                    }
+                except OSError:
+                    # Ignorer les fichiers inaccessibles
+                    continue
+        
+        logging.info(f"Cache de fichiers initialisé: {len(self.file_cache)} fichiers en suivi")
     
-    def stage_file(self, file_path: str) -> bool:
+    def is_git_config_set(self) -> bool:
         """
-        Ajoute un fichier à l'index Git.
+        Vérifie si les informations de configuration Git (user.name et user.email) sont définies.
+        
+        Returns:
+            bool: True si la configuration est complète, False sinon
+        """
+        try:
+            with self.repo.config_reader() as config:
+                username = config.get_value("user", "name", None)
+                email = config.get_value("user", "email", None)
+                return bool(username and email)
+        except Exception as e:
+            logging.error(f"Erreur lors de la vérification de la configuration Git: {e}")
+            return False
+    
+    def set_git_config(self, username: str, email: str) -> bool:
+        """
+        Configure les informations user.name et user.email dans le dépôt Git.
         
         Args:
-            file_path: Chemin du fichier à ajouter
+            username: Nom d'utilisateur Git
+            email: Email Git
             
         Returns:
-            True si l'opération a réussi
+            bool: True si la configuration a réussi, False sinon
         """
         try:
-            self._run_git_command(['add', file_path])
-            self.logger.info(f"Fichier ajouté à l'index: {file_path}")
+            with self.repo.config_writer() as config:
+                config.set_value("user", "name", username)
+                config.set_value("user", "email", email)
+            logging.info(f"Configuration Git définie: {username} <{email}>")
             return True
         except Exception as e:
-            self.logger.error(f"Erreur lors de l'ajout du fichier {file_path}: {str(e)}")
+            logging.error(f"Erreur lors de la configuration Git: {e}")
             return False
     
-    def stage_all_changes(self) -> bool:
+    # Correction de la méthode get_repo_status dans GitIntegrator
+
+def get_repo_status(self) -> Dict[str, List[str]]:
+    """
+    Obtient l'état actuel du dépôt Git.
+    
+    Returns:
+        Dict contenant les fichiers non suivis, modifiés et indexés
+    """
+    status = {
+        "untracked": [],
+        "modified": [],
+        "staged": []
+    }
+    
+    try:
+        # Fichiers non suivis (correction)
+        untracked_files = self.repo.untracked_files
+        status["untracked"] = untracked_files if isinstance(untracked_files, list) else []
+        
+        # Fichiers modifiés
+        diff = self.repo.index.diff(None)
+        status["modified"] = [item.a_path for item in diff]
+        
+        # Fichiers indexés (staged)
+        diff = self.repo.index.diff("HEAD")
+        status["staged"] = [item.a_path for item in diff]
+        
+        return status
+    except Exception as e:
+        logging.error(f"Erreur lors de la récupération de l'état du dépôt: {e}")
+        return status
+    
+    def enable_auto_tracking(self) -> None:
         """
-        Ajoute tous les changements à l'index Git.
+        Active le suivi automatique des modifications.
+        """
+        self.auto_tracking_enabled = True
+        logging.info("Suivi automatique des modifications Git activé")
+    
+    def disable_auto_tracking(self) -> None:
+        """
+        Désactive le suivi automatique des modifications.
+        """
+        self.auto_tracking_enabled = False
+        logging.info("Suivi automatique des modifications Git désactivé")
+    
+    def set_commit_rules(self, rules: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Définit les règles pour les commits automatiques.
+        
+        Args:
+            rules: Dictionnaire de règles de commit, où chaque règle contient:
+                - pattern: Liste de patterns de fichiers (glob ou regex)
+                - message: Message de commit à utiliser quand ces fichiers sont modifiés
+        """
+        self.commit_rules = rules
+        logging.info(f"Règles de commit configurées: {len(rules)} règles définies")
+    
+    def detect_changes(self) -> List[Dict[str, Any]]:
+        """
+        Détecte les changements dans le dépôt par rapport au dernier check.
         
         Returns:
-            True si l'opération a réussi
+            Liste des fichiers modifiés avec leurs métadonnées
+        """
+        changes = []
+        
+        for root, _, files in os.walk(self.repo_path):
+            # Ignorer les dossiers .git et autres dossiers exclus
+            if ".git" in root or any(excluded in root for excluded in [
+                "__pycache__", "venv", ".vscode", "node_modules"
+            ]):
+                continue
+            
+            for file in files:
+                # Vérifier si l'extension est dans les extensions suivies
+                ext = os.path.splitext(file)[1]
+                if ext not in self.config["tracked_extensions"]:
+                    continue
+                
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, self.repo_path)
+                
+                try:
+                    mtime = os.path.getmtime(file_path)
+                    
+                    # Vérifier si le fichier est nouveau ou modifié
+                    if rel_path not in self.file_cache:
+                        changes.append({
+                            "path": rel_path,
+                            "type": "new",
+                            "mtime": mtime
+                        })
+                        self.file_cache[rel_path] = {
+                            "mtime": mtime,
+                            "last_checked": time.time()
+                        }
+                    elif mtime > self.file_cache[rel_path]["mtime"]:
+                        changes.append({
+                            "path": rel_path,
+                            "type": "modified",
+                            "mtime": mtime,
+                            "previous_mtime": self.file_cache[rel_path]["mtime"]
+                        })
+                        self.file_cache[rel_path]["mtime"] = mtime
+                        self.file_cache[rel_path]["last_checked"] = time.time()
+                except OSError:
+                    # Ignorer les fichiers inaccessibles
+                    continue
+        
+        # Détecter les fichiers supprimés
+        for rel_path in list(self.file_cache.keys()):
+            file_path = os.path.join(self.repo_path, rel_path)
+            if not os.path.exists(file_path):
+                changes.append({
+                    "path": rel_path,
+                    "type": "deleted",
+                    "previous_mtime": self.file_cache[rel_path]["mtime"]
+                })
+                del self.file_cache[rel_path]
+        
+        if changes:
+            logging.info(f"Détection de {len(changes)} changements: {[c['path'] for c in changes]}")
+        
+        return changes
+    
+    def generate_commit_message(self, changes: List[Dict[str, Any]]) -> str:
+        """
+        Génère un message de commit intelligent basé sur les fichiers modifiés
+        et les règles de commit définies.
+        
+        Args:
+            changes: Liste des fichiers modifiés avec leurs métadonnées
+        
+        Returns:
+            Message de commit généré
+        """
+        # Classement des changements par type
+        changes_by_type = {
+            "new": [],
+            "modified": [],
+            "deleted": []
+        }
+        
+        for change in changes:
+            changes_by_type[change["type"]].append(change["path"])
+        
+        # Classement des changements par règle
+        matched_rules = {}
+        
+        for change in changes:
+            for rule_name, rule in self.commit_rules.items():
+                patterns = rule["pattern"]
+                if not isinstance(patterns, list):
+                    patterns = [patterns]
+                
+                for pattern in patterns:
+                    # Si le pattern est une extension
+                    if pattern.startswith("."):
+                        if change["path"].endswith(pattern):
+                            matched_rules[rule_name] = matched_rules.get(rule_name, []) + [change["path"]]
+                            break
+                    # Si le pattern est un dossier
+                    elif pattern.endswith("/"):
+                        if change["path"].startswith(pattern):
+                            matched_rules[rule_name] = matched_rules.get(rule_name, []) + [change["path"]]
+                            break
+                    # Si le pattern est un glob
+                    elif "*" in pattern:
+                        import fnmatch
+                        if fnmatch.fnmatch(change["path"], pattern):
+                            matched_rules[rule_name] = matched_rules.get(rule_name, []) + [change["path"]]
+                            break
+                    # Sinon, on considère que c'est un match exact
+                    elif change["path"] == pattern:
+                        matched_rules[rule_name] = matched_rules.get(rule_name, []) + [change["path"]]
+                        break
+        
+        # Génération du message de commit
+        if matched_rules:
+            # Si des règles ont été matchées, on utilise leurs messages
+            messages = []
+            for rule_name, files in matched_rules.items():
+                rule = self.commit_rules[rule_name]
+                rule_message = rule["message"]
+                
+                # Si on a plusieurs fichiers pour une même règle, on peut les lister
+                if len(files) > 1:
+                    affected_files = ", ".join(os.path.basename(f) for f in files[:3])
+                    if len(files) > 3:
+                        affected_files += f" et {len(files) - 3} autres"
+                    rule_message += f" ({affected_files})"
+                    
+                messages.append(rule_message)
+            
+            commit_message = "; ".join(messages)
+        else:
+            # Si aucune règle n'a été matchée, on génère un message générique
+            parts = []
+            
+            if changes_by_type["new"]:
+                files = changes_by_type["new"]
+                msg = f"Ajout de {len(files)} fichier{'s' if len(files) > 1 else ''}"
+                if len(files) <= 3:
+                    msg += f": {', '.join(os.path.basename(f) for f in files)}"
+                parts.append(msg)
+            
+            if changes_by_type["modified"]:
+                files = changes_by_type["modified"]
+                msg = f"Mise à jour de {len(files)} fichier{'s' if len(files) > 1 else ''}"
+                if len(files) <= 3:
+                    msg += f": {', '.join(os.path.basename(f) for f in files)}"
+                parts.append(msg)
+            
+            if changes_by_type["deleted"]:
+                files = changes_by_type["deleted"]
+                msg = f"Suppression de {len(files)} fichier{'s' if len(files) > 1 else ''}"
+                if len(files) <= 3:
+                    msg += f": {', '.join(os.path.basename(f) for f in files)}"
+                parts.append(msg)
+            
+            commit_message = "; ".join(parts)
+        
+        # Utilisation du template de message
+        commit_message = self.config["message_template"].format(message=commit_message)
+        
+        return commit_message
+    
+    def stage_changes(self, paths: Optional[List[str]] = None) -> bool:
+        """
+        Ajoute les fichiers modifiés à l'index Git (git add).
+        
+        Args:
+            paths: Liste des chemins à ajouter (None pour tous les fichiers)
+            
+        Returns:
+            bool: True si l'ajout a réussi, False sinon
         """
         try:
-            self._run_git_command(['add', '.'])
-            self.logger.info("Tous les changements ont été ajoutés à l'index")
+            if paths:
+                # Ajouter des chemins spécifiques
+                for path in paths:
+                    full_path = os.path.join(self.repo_path, path)
+                    # Si le fichier existe, on l'ajoute
+                    if os.path.exists(full_path):
+                        self.repo.git.add(path)
+                    # Sinon, c'est qu'il a été supprimé, donc on le retire
+                    else:
+                        self.repo.git.rm(path)
+            else:
+                # Ajouter tous les fichiers modifiés
+                self.repo.git.add("--all")
+            
+            logging.info("Fichiers ajoutés à l'index Git")
             return True
         except Exception as e:
-            self.logger.error(f"Erreur lors de l'ajout des changements: {str(e)}")
+            logging.error(f"Erreur lors de l'ajout des fichiers à l'index: {e}")
             return False
     
-    def commit(self, message: str = None) -> bool:
+    def commit_changes(self, message: str, paths: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Crée un commit avec les changements stagés.
+        Effectue un commit des changements.
         
         Args:
             message: Message de commit
+            paths: Liste des chemins à inclure dans le commit (None pour tous les fichiers indexés)
             
         Returns:
-            True si l'opération a réussi
+            Dict contenant le résultat du commit (succès, message, etc.)
         """
-        if not message:
-            message = self._generate_commit_message()
+        result = {
+            "success": False,
+            "message": "",
+            "commit_id": None,
+            "timestamp": datetime.now().isoformat()
+        }
         
         try:
-            self._run_git_command(['commit', '-m', message])
+            # Vérifier s'il y a des changements à committer
+            status = self.get_repo_status()
+            if not status["untracked"] and not status["modified"] and not status["staged"]:
+                result["message"] = "Aucun changement à committer"
+                return result
+            
+            # Ajouter les fichiers à l'index
+            self.stage_changes(paths)
+            
+            # Vérifier à nouveau après staging
+            staged_status = self.get_repo_status()
+            if not staged_status["staged"]:
+                result["message"] = "Aucun changement indexé pour le commit"
+                return result
+            
+            # Effectuer le commit
+            commit = self.repo.git.commit("-m", message)
+            commit_id = self.repo.head.commit.hexsha
+            
+            result["success"] = True
+            result["message"] = f"Commit effectué avec succès: {commit_id[:8]}"
+            result["commit_id"] = commit_id
             self.last_commit_time = time.time()
-            self.logger.info(f"Commit créé: {message}")
-            return True
+            
+            logging.info(f"Commit effectué: {commit_id[:8]} - {message}")
+            return result
         except Exception as e:
-            self.logger.error(f"Erreur lors de la création du commit: {str(e)}")
-            return False
+            logging.error(f"Erreur lors du commit: {e}")
+            result["message"] = f"Erreur lors du commit: {str(e)}"
+            return result
     
-    def _generate_commit_message(self) -> str:
+    def push_changes(self, remote_name: Optional[str] = None, branch: Optional[str] = None) -> Dict[str, Any]:
         """
-        Génère un message de commit automatique basé sur les changements.
-        
-        Returns:
-            Message de commit
-        """
-        changes = self.check_changes()
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Compter les changements par type
-        counts = {k: len(v) for k, v in changes.items() if v}
-        
-        # Générer un résumé basé sur les types de changements
-        if counts:
-            change_summary = ", ".join(f"{count} {type}" for type, count in counts.items() if count > 0)
-            return f"Auto-commit: {change_summary} - {timestamp}"
-        else:
-            return f"Auto-commit - {timestamp}"
-    
-    def push(self, remote: str = 'origin') -> bool:
-        """
-        Pousse les commits vers le dépôt distant.
+        Pousse les changements vers le dépôt distant (git push).
         
         Args:
-            remote: Nom du dépôt distant
+            remote_name: Nom du dépôt distant (défaut: config["remote_name"])
+            branch: Nom de la branche (défaut: config["default_branch"])
             
         Returns:
-            True si l'opération a réussi
+            Dict contenant le résultat du push (succès, message, etc.)
         """
+        result = {
+            "success": False,
+            "message": "",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Utiliser les valeurs par défaut si non spécifiées
+        remote_name = remote_name or self.config["remote_name"]
+        branch = branch or self.config["default_branch"]
+        
         try:
-            self._run_git_command(['push', remote, self.current_branch])
-            self.logger.info(f"Changements poussés vers {remote}/{self.current_branch}")
-            return True
+            # Vérifier si le remote existe
+            remotes = [r.name for r in self.repo.remotes]
+            if remote_name not in remotes:
+                result["message"] = f"Le remote '{remote_name}' n'existe pas"
+                return result
+            
+            # Utiliser un token GitHub si disponible
+            if self.config.get("github_token"):
+                # Construire l'URL avec le token intégré
+                token = self.config["github_token"]
+                remote = self.repo.remote(remote_name)
+                github_url = remote.url
+                
+                # Remplacer l'URL par une URL avec le token
+                if github_url.startswith("https://"):
+                    auth_url = github_url.replace("https://", f"https://{token}@")
+                    self.repo.git.remote("set-url", remote_name, auth_url)
+                    
+                    # Push avec la nouvelle URL
+                    push_result = self.repo.git.push(remote_name, branch)
+                    
+                    # Restaurer l'URL d'origine (pour des raisons de sécurité)
+                    self.repo.git.remote("set-url", remote_name, github_url)
+                else:
+                    # Si l'URL n'est pas HTTPS, utiliser la méthode standard
+                    push_result = self.repo.git.push(remote_name, branch)
+            else:
+                # Méthode standard sans token
+                push_result = self.repo.git.push(remote_name, branch)
+            
+            result["success"] = True
+            result["message"] = f"Push effectué avec succès vers {remote_name}/{branch}"
+            
+            logging.info(f"Push effectué vers {remote_name}/{branch}")
+            return result
         except Exception as e:
-            self.logger.error(f"Erreur lors du push: {str(e)}")
-            return False
+            logging.error(f"Erreur lors du push: {e}")
+            result["message"] = f"Erreur lors du push: {str(e)}"
+            return result
     
-    def auto_commit_if_needed(self) -> bool:
+    def should_auto_commit(self) -> bool:
         """
-        Crée un commit automatique si des changements sont en attente depuis longtemps.
+        Détermine si un commit automatique doit être effectué en fonction du temps écoulé.
         
         Returns:
-            True si un commit a été créé
+            bool: True si un commit automatique doit être effectué, False sinon
         """
-        if not self.auto_commit:
+        if not self.config["auto_commit"]:
             return False
         
-        # Vérifier s'il y a des changements non stagés
-        unstaged_changes = self._get_unstaged_changes()
-        if not unstaged_changes:
-            return False
+        elapsed = time.time() - self.last_commit_time
+        return elapsed >= self.config["commit_interval"]
+    
+    def check_and_update(self) -> Dict[str, Any]:
+        """
+        Vérifie les modifications et effectue un commit/push si nécessaire.
+        Cette méthode est destinée à être appelée périodiquement.
         
-        # Vérifier si le délai depuis le dernier commit est écoulé
-        current_time = time.time()
-        if (self.last_commit_time is None or 
-            current_time - self.last_commit_time >= self.commit_interval):
-            
-            # Stager tous les changements
-            self.stage_all_changes()
-            
-            # Créer un commit
-            result = self.commit()
-            
-            # Pousser si configuré
-            if result and self.auto_push:
-                self.push()
-            
+        Returns:
+            Dict contenant le résultat de l'opération
+        """
+        result = {
+            "action": "none",
+            "changes_detected": False,
+            "commit_result": None,
+            "push_result": None
+        }
+        
+        if not self.auto_tracking_enabled:
             return result
         
-        return False
+        # Détecter les changements
+        changes = self.detect_changes()
+        result["changes_detected"] = bool(changes)
+        
+        if not changes:
+            return result
+        
+        # Vérifier si un commit automatique doit être effectué
+        if self.should_auto_commit():
+            # Générer un message de commit
+            commit_message = self.generate_commit_message(changes)
+            
+            # Effectuer le commit
+            commit_result = self.commit_changes(commit_message)
+            result["action"] = "commit"
+            result["commit_result"] = commit_result
+            
+            # Effectuer un push si configuré
+            if commit_result["success"] and self.config["auto_push"]:
+                push_result = self.push_changes()
+                result["action"] = "commit_and_push"
+                result["push_result"] = push_result
+        
+        return result
     
-    def get_commit_history(self, count: int = 10) -> List[Dict[str, str]]:
+    def create_gitignore(self, templates: List[str] = None) -> bool:
         """
-        Récupère l'historique des commits.
+        Crée ou met à jour le fichier .gitignore dans le dépôt.
         
         Args:
-            count: Nombre de commits à récupérer
+            templates: Liste des templates à inclure (ex: ["python", "vscode"])
             
         Returns:
-            Liste des commits sous forme de dictionnaires
+            bool: True si l'opération a réussi, False sinon
         """
         try:
-            output = self._run_git_command([
-                'log',
-                f'-{count}',
-                '--pretty=format:%H|%an|%ad|%s',
-                '--date=iso'
-            ])
+            # Templates de base pour les projets Python
+            default_ignores = [
+                "# Python",
+                "__pycache__/",
+                "*.py[cod]",
+                "*$py.class",
+                "*.so",
+                ".Python",
+                "env/",
+                "build/",
+                "develop-eggs/",
+                "dist/",
+                "downloads/",
+                "eggs/",
+                ".eggs/",
+                "lib/",
+                "lib64/",
+                "parts/",
+                "sdist/",
+                "var/",
+                "*.egg-info/",
+                ".installed.cfg",
+                "*.egg",
+                "",
+                "# Virtualenv",
+                "venv/",
+                "ENV/",
+                "",
+                "# IDEs and editors",
+                ".idea/",
+                ".vscode/",
+                "*.swp",
+                "*.swo",
+                "",
+                "# OS specific",
+                ".DS_Store",
+                "Thumbs.db",
+            ]
             
-            commits = []
-            for line in output.split('\n'):
-                if line.strip():
-                    parts = line.split('|', 3)
-                    if len(parts) == 4:
-                        commit = {
-                            'hash': parts[0],
-                            'author': parts[1],
-                            'date': parts[2],
-                            'message': parts[3]
-                        }
-                        commits.append(commit)
+            gitignore_path = os.path.join(self.repo_path, ".gitignore")
             
-            return commits
+            # Lire le fichier .gitignore existant s'il existe
+            existing_ignores = []
+            if os.path.exists(gitignore_path):
+                with open(gitignore_path, "r", encoding="utf-8") as f:
+                    existing_ignores = f.read().splitlines()
+            
+            # Combiner les ignores existants avec les nouveaux
+            combined = set(existing_ignores)
+            for item in default_ignores:
+                combined.add(item)
+            
+            # Écrire le fichier .gitignore
+            with open(gitignore_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(sorted(combined)))
+            
+            logging.info(f"Fichier .gitignore créé/mis à jour à {gitignore_path}")
+            return True
         except Exception as e:
-            self.logger.error(f"Erreur lors de la récupération de l'historique: {str(e)}")
+            logging.error(f"Erreur lors de la création du fichier .gitignore: {e}")
+            return False
+    
+    def create_branch(self, branch_name: str, from_branch: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Crée une nouvelle branche et bascule dessus.
+        
+        Args:
+            branch_name: Nom de la nouvelle branche
+            from_branch: Branche de base (None pour la branche actuelle)
+            
+        Returns:
+            Dict contenant le résultat de l'opération
+        """
+        result = {
+            "success": False,
+            "message": "",
+            "branch": None
+        }
+        
+        try:
+            # Récupérer la branche de base
+            if from_branch:
+                base = self.repo.heads[from_branch]
+            else:
+                base = self.repo.active_branch
+            
+            # Créer la nouvelle branche
+            new_branch = self.repo.create_head(branch_name, base)
+            
+            # Basculer sur la nouvelle branche
+            new_branch.checkout()
+            
+            result["success"] = True
+            result["message"] = f"Branche '{branch_name}' créée et activée"
+            result["branch"] = branch_name
+            
+            logging.info(f"Branche '{branch_name}' créée à partir de '{base.name}'")
+            return result
+        except Exception as e:
+            logging.error(f"Erreur lors de la création de la branche: {e}")
+            result["message"] = f"Erreur lors de la création de la branche: {str(e)}"
+            return result
+    
+    def list_branches(self) -> List[Dict[str, Any]]:
+        """
+        Liste toutes les branches locales du dépôt.
+        
+        Returns:
+            Liste des branches avec leurs informations
+        """
+        branches = []
+        
+        try:
+            active_branch = self.repo.active_branch.name
+            
+            for branch in self.repo.heads:
+                branches.append({
+                    "name": branch.name,
+                    "commit": branch.commit.hexsha,
+                    "message": branch.commit.message.strip(),
+                    "author": f"{branch.commit.author.name} <{branch.commit.author.email}>",
+                    "date": datetime.fromtimestamp(branch.commit.committed_date).isoformat(),
+                    "is_active": branch.name == active_branch
+                })
+            
+            return branches
+        except Exception as e:
+            logging.error(f"Erreur lors de la récupération des branches: {e}")
             return []
     
-    def create_branch(self, branch_name: str) -> bool:
+    def setup_github_workflow(self, workflow_type: str = "basic") -> bool:
         """
-        Crée une nouvelle branche.
+        Crée un workflow GitHub Actions de base.
         
         Args:
-            branch_name: Nom de la branche à créer
+            workflow_type: Type de workflow à créer ("basic", "python", "docs")
             
         Returns:
-            True si l'opération a réussi
+            bool: True si l'opération a réussi, False sinon
         """
         try:
-            self._run_git_command(['checkout', '-b', branch_name])
-            self.current_branch = branch_name
-            self.logger.info(f"Branche créée et checkoutée: {branch_name}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Erreur lors de la création de la branche {branch_name}: {str(e)}")
-            return False
-    
-    def checkout_branch(self, branch_name: str) -> bool:
-        """
-        Bascule vers une branche existante.
-        
-        Args:
-            branch_name: Nom de la branche
+            # Créer le dossier .github/workflows s'il n'existe pas
+            workflows_dir = os.path.join(self.repo_path, ".github", "workflows")
+            os.makedirs(workflows_dir, exist_ok=True)
             
-        Returns:
-            True si l'opération a réussi
-        """
-        try:
-            self._run_git_command(['checkout', branch_name])
-            self.current_branch = branch_name
-            self.logger.info(f"Branche checkoutée: {branch_name}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Erreur lors du checkout de la branche {branch_name}: {str(e)}")
+            workflow_file = None
+            workflow_content = ""
+            
+            if workflow_type == "python":
+                workflow_file = "python-test.yml"
+                workflow_content = """name: Python Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Run tests
+      run: |
+        python -m unittest discover
+"""
+            elif workflow_type == "docs":
+                workflow_file = "docs-build.yml"
+                workflow_content = """name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - '**.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install mkdocs
+    - name: Build docs
+      run: |
+        mkdocs build
+"""
+            else:  # basic
+                workflow_file = "basic-check.yml"
+                workflow_content = """name: Basic Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run file check
+      run: |
+        echo "Repository structure:"
+        find . -type f -not -path "*/\.*" | sort
+"""
+            
+            # Écrire le fichier de workflow
+            if workflow_file and workflow_content:
+                workflow_path = os.path.join(workflows_dir, workflow_file)
+                with open(workflow_path, "w", encoding="utf-8") as f:
+                    f.write(workflow_content)
+                
+                logging.info(f"Workflow GitHub Actions '{workflow_file}' créé")
+                return True
+            
             return False
-
-
-# Test simple du module si exécuté directement
-if __name__ == "__main__":
-    # Créer une instance de l'intégrateur Git
-    integrator = GitIntegrator()
-    
-    # Vérifier les changements
-    print("Vérification des changements...")
-    changes = integrator.check_changes()
-    for change_type, files in changes.items():
-        if files:
-            print(f"{change_type.capitalize()}: {len(files)} fichier(s)")
-            for file in files[:5]:  # Afficher jusqu'à 5 fichiers
-                print(f"  - {file}")
-            if len(files) > 5:
-                print(f"  - ... et {len(files) - 5} autres")
-    
-    # Récupérer l'historique des commits
-    print("\nRécupération de l'historique des commits...")
-    commits = integrator.get_commit_history(5)
-    for commit in commits:
-        print(f"{commit['date']} - {commit['message']} ({commit['hash'][:7]})")
-    
-    # Ne pas créer de commit automatique pendant les tests
-    print("\nTest terminé.")
+        except Exception as e:
+            logging.error(f"Erreur lors de la création du workflow GitHub Actions: {e}")
+            return False

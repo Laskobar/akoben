@@ -1,0 +1,47 @@
+/home/lasko/akoben-clean/
+├── data
+│   └── images
+├── src
+│   ├── agents
+│   │   ├── execution
+│   │   │   ├── __init__.py
+│   │   │   ├── mt5_connector.py
+│   │   │   └── __pycache__
+│   │   ├── vision
+│   │   │   ├── __init__.py
+│   │   │   ├── kora.py
+│   │   │   └── __pycache__
+│   │   ├── __init__.py
+│   │   ├── market_analyzer.py
+│   │   └── strategy_developer.py
+│   ├── anansi
+│   │   ├── __init__.py
+│   │   ├── core.py
+│   │   └── __pycache__
+│   ├── strategies
+│   ├── tools
+│   ├── ui
+│   └── __init__.py
+├── update
+│   ├── akoben-progress-tracker.md
+│   └── akoben-updated.md
+├── venv
+├── akoben.py
+├── arborescence_akoben.txt
+├── create_test_image.py
+├── direct_approach.py
+├── id_test.py
+├── launch_mt5.sh
+├── mt5setup.exe
+├── rappel de commande
+├── reset_test.py
+├── requirements.txt
+├── structure.py
+├── test.py
+├── test_buy_order.py
+├── test_file_connection.py
+├── test_id_connector.py
+├── test_mt5_command.py
+├── test_mt5_direct.py
+├── test_order.py
+└── test_zmq_connection.py

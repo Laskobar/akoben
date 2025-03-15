@@ -1,34 +1,52 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.so
-build/
-dist/
+
+# IDEs and editors
+# OS specific
+# Python
+# Virtualenv
+*$py.class
+*.egg
 *.egg-info/
+*.exe
+*.log
+*.py[cod]
+*.pyc
+*.pyd
+*.pyo
+*.so
+*.swo
+*.swp
+.DS_Store
+.Python
 .eggs/
 .env
-venv/
-env/
-*.log
 .idea/
+.installed.cfg
 .vscode/
-.DS_Store
+ENV/
+Next_Step.txt
+Nouveaux\ Composants\ d\'Apprentissage\ par\ Imitation\ Akoben.md
 Thumbs.db
-data/
-*.exe
-akoben.md
+__pycache__/
 akoben-integration-recommendations.md
 akoben-progress-tracker.md
-Next_Step.txt
-traduction_vison_algo.txt
-Nouveaux\ Composants\ d\'Apprentissage\ par\ Imitation\ Akoben.md
+akoben.md
+build/
 create_test_image.py
+data/
+develop-eggs/
 direct_approach.py
+dist/
+downloads/
+eggs/
+env/
 id_test.py
 launch_mt5.sh
+lib/
+lib64/
+parts/
 reset_test.py
 rqppel de co;;qndes
+sdist/
 structure.py
 test.py
 test_buy_order.py
@@ -38,3 +56,6 @@ test_mt5_commands.py
 test_mt5_direct.py
 test_order.py
 test_zmq_connection.py
+traduction_vison_algo.txt
+var/
+venv/

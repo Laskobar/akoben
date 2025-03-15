@@ -1,68 +1,1 @@
-# Créer une version mise à jour de test_mbongi.py qui teste les nouvelles fonctionnalités
-import os
-import time
-from src.agents.documentation.mbongi import Mbongi
-
-def main():
-    """Test de la version complète de Mbongi."""
-    print("=== Test de l'agent Mbongi complet ===")
-    
-    # Obtenir le chemin du projet
-    project_path = os.getcwd()
-    
-    # Créer une instance de Mbongi
-    mbongi = Mbongi(project_path)
-    
-    # Tester la génération de documentation
-    print("\nTest de génération de documentation...")
-    mbongi.update_all_documentation()
-    
-    # Tester le moniteur de session (en mode manuel)
-    print("\nTest du moniteur de session...")
-    mbongi.start_session()
-    
-    # Ajouter une idée de test
-    mbongi.process_idea("""
-[MBONGI:IDEA]
-Title: Intégration complète des composants de Mbongi
-Component: Mbongi
-Type: Amélioration
-Priority: Haute
-Description:
-Intégrer tous les composants de Mbongi (DocumentationGenerator, SessionMonitor, GitIntegrator)
-dans la classe principale pour offrir une fonctionnalité complète.
-
-Implementation:
-Mise à jour de la classe principale avec les nouveaux imports et initialisation des composants.
-Ajout de méthodes pour utiliser les nouvelles fonctionnalités.
-
-Dependencies:
-- Mbongi
-- DocumentationGenerator
-- SessionMonitor
-- GitIntegrator
-
-Status: Implémenté
-[/MBONGI:IDEA]
-""")
-    
-    # Simuler un peu de travail
-    print("Travail en cours...")
-    time.sleep(2)
-    
-    # Terminer la session
-    mbongi.end_session()
-    
-    # Tester l'intégration Git
-    print("\nTest de l'intégration Git...")
-    changes = mbongi.git_integrator.check_changes()
-    print("Changements détectés:")
-    for change_type, files in changes.items():
-        if files:
-            print(f"- {change_type}: {len(files)} fichier(s)")
-    
-    print("\nTests terminés.")
-    print("Mbongi est maintenant complètement fonctionnel avec tous ses composants!")
-
-if __name__ == "__main__":
-    main()
+#!/usr/bin/env python3# -*- coding: utf-8 -*-import osimport sysimport timefrom datetime import datetime# Ajout du chemin du projet aux chemins de recherche Pythoncurrent_dir = os.path.dirname(os.path.abspath(__file__))project_root = os.path.abspath(os.path.join(current_dir, '..'))if project_root not in sys.path:    sys.path.insert(0, project_root)# Import de l'agent Mbongi depuis le module appropriéfrom src.agents.documentation.mbongi import Mbongidef main():    """    Test principal de l'agent Mbongi avec automatisation Git intégrée    """    # Chemin du projet à documenter (le répertoire racine)    project_path = project_root        # Configuration pour Mbongi    config = {        "knowledge_base": {            "base_path": os.path.join(project_path, "docs", "knowledge_base")        },        "code_analyzer": {            "excluded_dirs": ["venv", "__pycache__", ".git", ".vscode", "docs"]        },        "documentation_generator": {            "templates_dir": os.path.join(project_path, "src", "agents", "documentation", "templates"),            "output_dir": os.path.join(project_path, "docs")        },        "session_monitor": {            "check_interval": 60  # secondes        },        "git_integrator": {            "repo_path": project_path,            "remote_name": "origin",            "default_branch": "main",            "auto_commit": True,            "auto_push": True,            "commit_interval": 3600,  # 1 heure (en secondes)            "message_template": "MBONGI: {message}",            "tracked_extensions": [".py", ".md", ".txt", ".yaml", ".yml", ".json"],            "username": os.environ.get("GIT_USERNAME", ""),            "email": os.environ.get("GIT_EMAIL", ""),            "github_token": os.environ.get("GITHUB_TOKEN", "")        }    }        # Initialisation de Mbongi avec la configuration    mbongi = Mbongi(project_path, config)        # Analyse du code et génération de la documentation    print("\n--- Analyse du code et génération de la documentation ---")    mbongi.generate_project_documentation()        # Configuration et activation de l'intégration Git automatique    print("\n--- Configuration de l'intégration Git automatique ---")    setup_git_automation(mbongi)        # Simulation d'une session de développement    print("\n--- Simulation d'une session de développement ---")    mbongi.start_session()        # Ajout d'une idée pendant la session    idea = {        "title": "Amélioration de l'intégration Git",        "description": "Configurer GitIntegrator pour automatiser les commits et pushes basés sur les modifications détectées",        "components": ["Mbongi", "GitIntegrator"],        "priority": "High",        "tags": ["automation", "git", "documentation"]    }    mbongi.add_idea(idea)        # Terminer la session    time.sleep(5)  # Attente pour simuler du travail    mbongi.end_session()        # Mettre en place une routine périodique de surveillance et de synchronisation Git    print("\n--- Mise en place d'une routine de surveillance Git ---")    git_monitoring_routine(mbongi)        print("\n--- Test terminé avec succès ---")def setup_git_automation(mbongi):    """    Configure l'automatisation Git pour Mbongi.    """    # Vérifie l'état du dépôt Git    git_status = mbongi.git_integrator.get_repo_status()    print(f"État du dépôt Git: {len(git_status['untracked'])} fichiers non suivis, "          f"{len(git_status['modified'])} fichiers modifiés, "          f"{len(git_status['staged'])} fichiers indexés")        # Configure les informations de l'utilisateur Git si nécessaires    if not mbongi.git_integrator.is_git_config_set():        username = input("Entrez votre nom d'utilisateur Git: ") if not config['git_integrator']['username'] else config['git_integrator']['username']        email = input("Entrez votre email Git: ") if not config['git_integrator']['email'] else config['git_integrator']['email']        mbongi.git_integrator.set_git_config(username, email)        print(f"Configuration Git définie pour {username} <{email}>")        # Active le suivi automatique des modifications    mbongi.git_integrator.enable_auto_tracking()    print("Suivi automatique des modifications Git activé")        # Configure les règles de commit automatique    mbongi.git_integrator.set_commit_rules({        "doc_updates": {            "pattern": ["docs/", "*.md"],            "message": "Mise à jour de la documentation"        },        "code_changes": {            "pattern": ["src/", "*.py"],            "message": "Mise à jour du code source"        },        "config_changes": {            "pattern": ["configs/", "*.yaml", "*.yml", "*.json"],            "message": "Mise à jour des fichiers de configuration"        }    })    print("Règles de commit automatique configurées")def git_monitoring_routine(mbongi):    """    Établit une routine pour surveiller les changements et synchroniser avec GitHub.    Cette fonction serait normalement exécutée dans un thread séparé ou une tâche programmée.    """    # Pour ce test, nous effectuons une seule synchronisation    print("Vérification des modifications...")    changes = mbongi.git_integrator.detect_changes()        if changes:        print(f"Détection de {len(changes)} changements dans le projet")                # Génération d'un message de commit basé sur les modifications        commit_message = mbongi.git_integrator.generate_commit_message(changes)        print(f"Message de commit généré: {commit_message}")                # Exécution du commit        commit_result = mbongi.git_integrator.commit_changes(commit_message)        print(f"Résultat du commit: {commit_result}")                # Synchronisation avec le dépôt distant (push)        if mbongi.git_integrator.config.get("auto_push", False):            push_result = mbongi.git_integrator.push_changes()            print(f"Résultat du push: {push_result}")    else:        print("Aucune modification détectée")        print("Pour une exécution continue, cette routine devrait être exécutée périodiquement")    print("Dans un environnement de production, utilisez un thread dédié ou une tâche cron")if __name__ == "__main__":    main()
