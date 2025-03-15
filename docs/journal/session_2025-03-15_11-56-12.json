@@ -1,0 +1,27 @@
+{
+  "start_time": "2025-03-15T11:56:12.998364",
+  "end_time": "2025-03-15T11:56:13.021003",
+  "duration_seconds": 0.022639,
+  "duration_formatted": "0:00:00",
+  "ideas": [
+    {
+      "timestamp": "2025-03-15T11:56:12.999268",
+      "title": "Intégration de la détection automatique de sessions XRDP",
+      "component": "Mbongi",
+      "type": "Nouvelle fonctionnalité",
+      "priority": "Moyenne",
+      "description": "Ajouter une fonctionnalité pour détecter automatiquement les connexions et déconnexions\nvia XRDP et gérer les sessions de développement en conséquence.",
+      "implementation": "Utiliser psutil pour surveiller les processus XRDP et déclencher des événements\nde début et de fin de session.",
+      "dependencies": [
+        "SessionMonitor",
+        "Mbongi"
+      ],
+      "status": "À implémenter",
+      "raw_content": "\n[MBONGI:IDEA]\nTitle: Intégration de la détection automatique de sessions XRDP\nComponent: Mbongi\nType: Nouvelle fonctionnalité\nPriority: Moyenne\nDescription:\nAjouter une fonctionnalité pour détecter automatiquement les connexions et déconnexions\nvia XRDP et gérer les sessions de développement en conséquence.\n\nImplementation:\nUtiliser psutil pour surveiller les processus XRDP et déclencher des événements\nde début et de fin de session.\n\nDependencies:\n- SessionMonitor\n- Mbongi\n\nStatus: À implémenter\n[/MBONGI:IDEA]\n",
+      "metadata": {
+        "last_updated": "2025-03-15T11:56:12.999480"
+      }
+    }
+  ],
+  "ideas_count": 1
+}

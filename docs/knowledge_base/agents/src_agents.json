@@ -1,0 +1,33 @@
+{
+  "name": "agents",
+  "path": "src/agents",
+  "type": "Directory",
+  "summary": {
+    "file_count": 15,
+    "total_lines": 4497,
+    "class_count": 11,
+    "function_count": 0,
+    "average_complexity": 0
+  },
+  "files": [
+    "market_analyzer.py",
+    "__init__.py",
+    "strategy_developer.py",
+    "mt5_connector.py",
+    "__init__.py",
+    "kora.py",
+    "trading_vision_annotator.py",
+    "__init__.py",
+    "git_integrator.py",
+    "code_analyzer.py",
+    "documentation_generator.py",
+    "mbongi.py",
+    "__init__.py",
+    "session_monitor.py",
+    "knowledge_base.py"
+  ],
+  "last_analyzed": "2025-03-15T12:24:19.447712",
+  "metadata": {
+    "last_updated": "2025-03-15T12:24:19.447881"
+  }
+}

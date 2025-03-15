@@ -1,0 +1,105 @@
+{
+  "name": "mbongi",
+  "path": "src/agents/documentation/mbongi.py",
+  "type": "File",
+  "docstring": "Agent Mbongi - Documentaliste et gestionnaire des connaissances pour Akoben.\nAdapté du projet Eliza pour Akoben.\nPermet la documentation automatique du code, le suivi du développement et la gestion des connaissances.",
+  "classes": [
+    "Mbongi"
+  ],
+  "functions": [],
+  "metrics": {
+    "class_count": 1,
+    "function_count": 0,
+    "import_count": 10,
+    "comment_lines": 49,
+    "complexity": {
+      "total": 56,
+      "per_function": {
+        "__init__": 1,
+        "_default_config": 1,
+        "_ensure_directories": 1,
+        "start_session": 2,
+        "end_session": 3,
+        "_generate_session_summary": 1,
+        "_save_session_summary": 1,
+        "process_idea": 4,
+        "_generate_idea_id": 1,
+        "analyze_component": 3,
+        "_create_component_card": 5,
+        "update_all_documentation": 4,
+        "_append_to_journal": 2,
+        "get_development_journal": 5,
+        "generate_development_report": 12,
+        "query_component": 7,
+        "register_update": 3
+      }
+    },
+    "documentation_ratio": 18.0
+  },
+  "dependencies": [
+    {
+      "name": "os",
+      "type": "stdlib"
+    },
+    {
+      "name": "sys",
+      "type": "stdlib"
+    },
+    {
+      "name": "json",
+      "type": "stdlib"
+    },
+    {
+      "name": "re",
+      "type": "stdlib"
+    },
+    {
+      "name": "datetime",
+      "type": "stdlib"
+    },
+    {
+      "name": "time",
+      "type": "external"
+    },
+    {
+      "name": "typing.Dict",
+      "type": "external"
+    },
+    {
+      "name": "typing.List",
+      "type": "external"
+    },
+    {
+      "name": "typing.Any",
+      "type": "external"
+    },
+    {
+      "name": "typing.Optional",
+      "type": "external"
+    },
+    {
+      "name": "typing.Union",
+      "type": "external"
+    },
+    {
+      "name": "typing.Tuple",
+      "type": "external"
+    },
+    {
+      "name": "threading",
+      "type": "external"
+    },
+    {
+      "name": "knowledge_base.KnowledgeBase",
+      "type": "external"
+    },
+    {
+      "name": "code_analyzer.CodeAnalyzer",
+      "type": "external"
+    }
+  ],
+  "last_analyzed": "2025-03-15T11:56:13.020199",
+  "metadata": {
+    "last_updated": "2025-03-15T11:56:13.020256"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "tools",
+  "path": "src/tools",
+  "type": "Directory",
+  "summary": {
+    "file_count": 3,
+    "total_lines": 876,
+    "class_count": 2,
+    "function_count": 0,
+    "average_complexity": 0
+  },
+  "files": [
+    "__init__.py",
+    "setup_text_processor.py",
+    "setup_database_manager.py"
+  ],
+  "last_analyzed": "2025-03-15T12:24:19.495864",
+  "metadata": {
+    "last_updated": "2025-03-15T12:24:19.496344"
+  }
+}

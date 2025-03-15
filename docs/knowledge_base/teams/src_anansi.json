@@ -1,0 +1,20 @@
+{
+  "name": "anansi",
+  "path": "src/anansi",
+  "type": "Directory",
+  "summary": {
+    "file_count": 2,
+    "total_lines": 553,
+    "class_count": 1,
+    "function_count": 0,
+    "average_complexity": 0
+  },
+  "files": [
+    "__init__.py",
+    "core.py"
+  ],
+  "last_analyzed": "2025-03-15T12:24:19.469869",
+  "metadata": {
+    "last_updated": "2025-03-15T12:24:19.470058"
+  }
+}

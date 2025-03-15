@@ -1,0 +1,26 @@
+{
+  "start_time": "2025-03-15T12:24:19.496897",
+  "end_time": "2025-03-15T12:24:21.500104",
+  "duration_seconds": 2.003207,
+  "duration_formatted": "0:00:02",
+  "ideas": [
+    {
+      "timestamp": "2025-03-15T12:24:19.497656",
+      "title": "Intégration complète des composants de Mbongi",
+      "component": "Mbongi",
+      "type": "Amélioration",
+      "priority": "Haute",
+      "description": "Intégrer tous les composants de Mbongi (DocumentationGenerator, SessionMonitor, GitIntegrator)",
+      "implementation": "Mise à jour de la classe principale avec les nouveaux imports et initialisation des composants.",
+      "dependencies": [
+        "Mbongi"
+      ],
+      "status": "Implémenté",
+      "raw_content": "\n\n[MBONGI:IDEA]\n\nTitle: Intégration complète des composants de Mbongi\n\nComponent: Mbongi\n\nType: Amélioration\n\nPriority: Haute\n\nDescription:\n\nIntégrer tous les composants de Mbongi (DocumentationGenerator, SessionMonitor, GitIntegrator)\n\ndans la classe principale pour offrir une fonctionnalité complète.\n\n\n\nImplementation:\n\nMise à jour de la classe principale avec les nouveaux imports et initialisation des composants.\n\nAjout de méthodes pour utiliser les nouvelles fonctionnalités.\n\n\n\nDependencies:\n\n- Mbongi\n\n- DocumentationGenerator\n\n- SessionMonitor\n\n- GitIntegrator\n\n\n\nStatus: Implémenté\n\n[/MBONGI:IDEA]\n\n",
+      "metadata": {
+        "last_updated": "2025-03-15T12:24:19.497789"
+      }
+    }
+  ],
+  "ideas_count": 1
+}
