@@ -19,3 +19,5 @@
 {"type": "analysis", "timestamp": "2025-03-15T17:33:46.303815", "component_path": "src/anansi", "component_type": "directory", "summary": {"classes": 1, "functions": 0}}
 {"type": "analysis", "timestamp": "2025-03-15T17:33:46.334593", "component_path": "src/tools", "component_type": "directory", "summary": {"classes": 2, "functions": 4}}
 {"type": "documentation_update", "timestamp": "2025-03-15T17:33:46.120938", "summary": {"timestamp": "2025-03-15T17:33:46.120938", "components_analyzed": 3, "files_analyzed": 22, "classes_documented": 15, "functions_documented": 5, "errors": []}}
+{"type": "session_start", "timestamp": "2025-03-15T17:37:45.895672", "metadata": {"workdir": "/home/lasko/akoben-clean"}}
+{"type": "session_end", "timestamp": "2025-03-15T17:37:57.748473", "duration_seconds": 11.852801, "ideas_count": 0}
