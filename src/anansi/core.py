@@ -8,6 +8,7 @@ from src.agents.market_analyzer import MarketAnalyzer
 from src.agents.strategy_developer import StrategyDeveloper
 from src.agents.vision.kora import Kora
 from src.agents.execution.mt5_connector import MT5FileConnector
+from src.anansi.prompts.qwen_prompts import SYSTEM_PROMPT
 
 class Anansi:
     """
@@ -19,7 +20,7 @@ class Anansi:
         self.ollama_base_url = "http://localhost:11434/api"
         
         # Modèles par défaut
-        self.general_model = self.config.get("general_model", "llama3")
+        self.general_model = self.config.get("general_model", "qwen:14b")
         self.code_model = self.config.get("code_model", "deepseek-coder")
         
         # Initialisation des agents
@@ -64,15 +65,21 @@ class Anansi:
         """
         model = model or self.general_model
         try:
+            payload = {"model": model, "prompt": prompt, "stream": False}
+            
+            # Ajouter le prompt système pour Qwen
+            if "qwen" in model.lower():
+                payload["system"] = SYSTEM_PROMPT
+                
             response = requests.post(
                 f"{self.ollama_base_url}/generate",
-                json={"model": model, "prompt": prompt, "stream": False}
+                json=payload
             )
             response.raise_for_status()
-            return response.json().get("response", "")
+            return response.json()["response"]
         except Exception as e:
-            print(f"Erreur lors de l'appel à Ollama: {e}")
-            return f"Je ne peux pas répondre pour le moment. Erreur: {str(e)}"
+            pprint(f"Erreur lors de l'appel au LLM: {str(e)}")
+            return "Erreur de communication avec le LLM"
     
     def process_instruction(self, instruction):
         """
