@@ -5,6 +5,7 @@ Anansi - Le cerveau central du système Akoben
 import os
 import json
 import requests
+import logging
 from datetime import datetime
 from pprint import pprint
 
@@ -18,6 +19,7 @@ from src.anansi.cognitive.memory import Memory
 from src.anansi.cognitive.reasoning import Reasoning
 from src.anansi.cognitive.decision import Decision
 from src.anansi.cognitive.learning import Learning
+from src.anansi.agent_manager import AgentManager  # Importer le nouveau gestionnaire d'agents
 
 class Anansi:
     """
@@ -32,12 +34,6 @@ class Anansi:
         self.general_model = self.config.get("general_model", "qwen:14b")
         self.code_model = self.config.get("code_model", "deepseek-coder")
         
-        # Initialisation des agents
-        self.agents = self._initialize_agents()
-        
-        print(f"Anansi initialisé avec modèle général: {self.general_model}, modèle code: {self.code_model}")
-        print(f"Agents initialisés: {', '.join(self.agents.keys())}")
-       
         # Nouveaux modules cognitifs adaptés de Goose
         self.memory = Memory(self.config.get("memory", {}))
         self.reasoning = Reasoning(
@@ -52,6 +48,19 @@ class Anansi:
             self.config.get("decision", {}),
             llm_caller=lambda prompt: self.call_llm(prompt)
         )
+        
+        # Nouveau gestionnaire d'agents
+        self.agent_manager = AgentManager(self)
+        
+        # Initialisation des agents de base
+        self.agents = self._initialize_agents()
+        
+        # Initialisation des équipes et workflows
+        self._initialize_teams()
+        self._initialize_workflows()
+        
+        print(f"Anansi initialisé avec modèle général: {self.general_model}, modèle code: {self.code_model}")
+        print(f"Agents initialisés: {', '.join(self.agents.keys())}")
     
     def process_cognitive_cycle(self, inputs, context=None):
         """
@@ -112,8 +121,50 @@ class Anansi:
             config=self.config.get("mt5_config", {}),
             llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
         )
+        
+        # Enregistrer également ces agents dans le gestionnaire d'agents
+        for name, agent in agents.items():
+            self.agent_manager.register_agent(agent)
 
         return agents
+    
+    def _initialize_teams(self):
+        """
+        Initialise les équipes d'agents
+        """
+        # Équipe Ubuntu (support)
+        self.agent_manager.create_team("ubuntu", ["mt5_connector"])
+        
+        # Équipe Djeli (vision)
+        self.agent_manager.create_team("djeli", ["vision_kora"])
+        
+        # Équipe Chaka (trading)
+        self.agent_manager.create_team("chaka", ["market_analyzer", "strategy_developer"])
+        
+        print(f"Équipes d'agents créées: {', '.join(self.agent_manager.agent_teams.keys())}")
+    
+    def _initialize_workflows(self):
+        """
+        Initialise les workflows standard
+        """
+        # Workflow d'analyse de marché
+        self.agent_manager.define_workflow(
+            "market_analysis_flow",
+            [
+                {"agent": "market_analyzer", "action": "analyze_market", "params": {}}
+            ]
+        )
+        
+        # Workflow d'exécution d'ordre de trading
+        self.agent_manager.define_workflow(
+            "execute_trade_order",
+            [
+                {"agent": "mt5_connector", "action": "connect", "params": {}},
+                {"agent": "mt5_connector", "action": "place_order", "params": {}}
+            ]
+        )
+        
+        print(f"Workflows définis: {', '.join(self.agent_manager.workflows.keys())}")
     
     def call_llm(self, prompt, model=None):
         """
