@@ -1,7 +1,1 @@
-"""
-Équipe Chaka - Agents de trading pour Akoben
-"""
-
-from src.agents.chaka.oba import Oba
-
-__all__ = ['Oba']
+"""Équipe Chaka - Agents de trading pour Akoben"""from src.agents.chaka.oba import Obafrom src.agents.chaka.iklwa import Iklwafrom src.agents.chaka.assegai import Assegaifrom src.agents.chaka.chaka_manager import ChakaManager__all__ = ['Oba', 'Iklwa', 'Assegai', 'ChakaManager']

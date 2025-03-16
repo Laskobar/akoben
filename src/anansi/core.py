@@ -20,6 +20,7 @@ from src.anansi.cognitive.reasoning import Reasoning
 from src.anansi.cognitive.decision import Decision
 from src.anansi.cognitive.learning import Learning
 from src.anansi.agent_manager import AgentManager  # Importer le nouveau gestionnaire d'agents
+from src.agents.chaka.chaka_manager import ChakaManager
 
 class Anansi:
     """
@@ -120,6 +121,11 @@ class Anansi:
         agents["mt5_connector"] = MT5FileConnector(
             config=self.config.get("mt5_config", {}),
             llm_caller=lambda prompt: self.call_llm(prompt, self.general_model)
+        )
+
+        agents["chaka_manager"] = ChakaManager(
+            config=self.config.get("chaka_config", {}),
+            anansi_core=self
         )
         
         # Enregistrer également ces agents dans le gestionnaire d'agents
@@ -349,6 +355,7 @@ class Anansi:
         )
         
         return f"""
+        
 # Description de la stratégie
 {result['strategy_description']}
 
@@ -664,3 +671,29 @@ class Anansi:
         Retourne l'historique de conversation
         """
         return self.conversation_history
+    
+    def analyze_trading_opportunity(self, symbol="US30", timeframe="M1", chart_image=None, workflow_type="full_analysis", trader_description=None):
+        """
+        Analyse une opportunité de trading en utilisant l'équipe Chaka.
+        
+        Args:
+            symbol: Symbole de l'instrument à analyser
+            timeframe: Timeframe d'analyse
+            chart_image: Chemin vers l'image du graphique (optionnel)
+            workflow_type: Type de workflow à exécuter
+            trader_description: Description textuelle du trader (optionnel)
+            
+        Returns:
+            Résultats de l'analyse
+        """
+        if "chaka_manager" not in self.agents:
+            return {"error": "Équipe Chaka non disponible."}
+        
+        chaka_manager = self.agents["chaka_manager"]
+        return chaka_manager.run_analysis(
+            symbol=symbol,
+            timeframe=timeframe,
+            chart_image=chart_image,
+            workflow_type=workflow_type,
+            trader_description=trader_description
+        )
