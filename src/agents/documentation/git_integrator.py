@@ -26,7 +26,7 @@ class GitIntegrator:
                 - remote_name: Nom du remote (default: "origin")
                 - default_branch: Branche par défaut (default: "main")
                 - auto_commit: Activer les commits automatiques (default: False)
-                - auto_push: Activer les push automatiques (default: False)
+                - auto_push: Activer les push automatiques (default: True)
                 - commit_interval: Intervalle entre les commits en secondes (default: 3600)
                 - message_template: Template pour les messages de commit (default: "MBONGI: {message}")
                 - tracked_extensions: Extensions des fichiers à suivre (default: [".py", ".md"])
@@ -38,7 +38,7 @@ class GitIntegrator:
             "remote_name": "origin",
             "default_branch": "main",
             "auto_commit": False,
-            "auto_push": False,
+            "auto_push": True,
             "commit_interval": 3600,  # 1 heure
             "message_template": "MBONGI: {message}",
             "tracked_extensions": [".py", ".md", ".txt", ".yaml", ".yml", ".json"],
@@ -138,37 +138,68 @@ class GitIntegrator:
             logging.error(f"Erreur lors de la configuration Git: {e}")
             return False
     
-    # Correction de la méthode get_repo_status dans GitIntegrator
-
-def get_repo_status(self) -> Dict[str, List[str]]:
-    """
-    Obtient l'état actuel du dépôt Git.
-    
-    Returns:
-        Dict contenant les fichiers non suivis, modifiés et indexés
-    """
-    status = {
-        "untracked": [],
-        "modified": [],
-        "staged": []
-    }
-    
-    try:
-        # Fichiers non suivis (correction)
-        untracked_files = self.repo.untracked_files
-        status["untracked"] = untracked_files if isinstance(untracked_files, list) else []
-        
-        # Fichiers modifiés
-        diff = self.repo.index.diff(None)
-        status["modified"] = [item.a_path for item in diff]
-        
-        # Fichiers indexés (staged)
-        diff = self.repo.index.diff("HEAD")
-        status["staged"] = [item.a_path for item in diff]
-        
-        return status
-    except Exception as e:
-        logging.error(f"Erreur lors de la récupération de l'état du dépôt: {e}")
+    # Correction de la méthode get_repo_status dans GitIntegrator
+
+
+
+def get_repo_status(self) -> Dict[str, List[str]]:
+
+    """
+
+    Obtient l'état actuel du dépôt Git.
+
+    
+
+    Returns:
+
+        Dict contenant les fichiers non suivis, modifiés et indexés
+
+    """
+
+    status = {
+
+        "untracked": [],
+
+        "modified": [],
+
+        "staged": []
+
+    }
+
+    
+
+    try:
+
+        # Fichiers non suivis (correction)
+
+        untracked_files = self.repo.untracked_files
+
+        status["untracked"] = untracked_files if isinstance(untracked_files, list) else []
+
+        
+
+        # Fichiers modifiés
+
+        diff = self.repo.index.diff(None)
+
+        status["modified"] = [item.a_path for item in diff]
+
+        
+
+        # Fichiers indexés (staged)
+
+        diff = self.repo.index.diff("HEAD")
+
+        status["staged"] = [item.a_path for item in diff]
+
+        
+
+        return status
+
+    except Exception as e:
+
+        logging.error(f"Erreur lors de la récupération de l'état du dépôt: {e}")
+
         return status
     
     def enable_auto_tracking(self) -> None:
