@@ -1,7 +1,12 @@
+"""
+Anansi - Le cerveau central du système Akoben
+"""
+
 import os
 import json
 import requests
 from datetime import datetime
+from pprint import pprint
 
 # Importer les agents
 from src.agents.market_analyzer import MarketAnalyzer
@@ -9,6 +14,10 @@ from src.agents.strategy_developer import StrategyDeveloper
 from src.agents.vision.kora import Kora
 from src.agents.execution.mt5_connector import MT5FileConnector
 from src.anansi.prompts.qwen_prompts import SYSTEM_PROMPT
+from src.anansi.cognitive.memory import Memory
+from src.anansi.cognitive.reasoning import Reasoning
+from src.anansi.cognitive.decision import Decision
+from src.anansi.cognitive.learning import Learning
 
 class Anansi:
     """
@@ -28,7 +37,54 @@ class Anansi:
         
         print(f"Anansi initialisé avec modèle général: {self.general_model}, modèle code: {self.code_model}")
         print(f"Agents initialisés: {', '.join(self.agents.keys())}")
+       
+        # Nouveaux modules cognitifs adaptés de Goose
+        self.memory = Memory(self.config.get("memory", {}))
+        self.reasoning = Reasoning(
+            self.config.get("reasoning", {}),
+            llm_caller=lambda prompt: self.call_llm(prompt)
+        )
+        self.learning = Learning(
+            self.config.get("learning", {}),
+            llm_caller=lambda prompt: self.call_llm(prompt)
+        )
+        self.decision = Decision(
+            self.config.get("decision", {}),
+            llm_caller=lambda prompt: self.call_llm(prompt)
+        )
     
+    def process_cognitive_cycle(self, inputs, context=None):
+        """
+        Exécute un cycle cognitif complet: mémoire, raisonnement, 
+        apprentissage et décision.
+        """
+        context = context or {}
+        
+        # Récupération des souvenirs pertinents
+        relevant_memories = self.memory.retrieve(inputs, context)
+        
+        # Raisonnement basé sur les inputs et les souvenirs
+        reasoning_results = self.reasoning.analyze(
+            inputs, 
+            relevant_memories, 
+            context
+        )
+        
+        # Prise de décision
+        decision = self.decision.decide(reasoning_results, context)
+        
+        # Apprentissage à partir de cette nouvelle expérience
+        self.learning.update(inputs, reasoning_results, decision, context)
+        
+        # Stockage de cette nouvelle expérience
+        self.memory.store(inputs, "episodic")
+        
+        return {
+            "memories": relevant_memories,
+            "reasoning": reasoning_results,
+            "decision": decision
+        }
+
     def _initialize_agents(self):
         """
         Initialise les agents spécialisés
