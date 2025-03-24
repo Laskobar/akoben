@@ -1,238 +1,178 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-Test de l'infrastructure d'apprentissage par imitation.
+Script de test pour l'infrastructure d'apprentissage par imitation d'Akoben.
+Ce script permet de tester le chargement des données d'exemple, l'extraction des caractéristiques,
+et l'entraînement de modèles d'imitation simples.
 """
 
 import os
 import sys
-import json
-from datetime import datetime
+import logging
+import pandas as pd
+from pathlib import Path
 
-# Ajouter le répertoire parent au path pour pouvoir importer les modules
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("ImitationTest")
 
-from src.learning.imitation_learning_manager import ImitationLearningManager
-from src.tools.setup_database_manager import SetupDatabaseManager
-from src.tools.setup_text_processor import SetupTextProcessor
+# Ajout du répertoire parent au path pour l'import des modules
+current_dir = Path(__file__).resolve().parent
+src_dir = current_dir / "src"
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
-def main():
-    """
-    Fonction principale de test.
-    """
-    print("=== Test de l'infrastructure d'apprentissage par imitation ===")
+try:
+    from learning.imitation_learning_manager import ImitationLearningManager
+    from tools.setup_database_manager import SetupDatabaseManager
+    from tools.setup_text_processor import SetupTextProcessor
+    logger.info("Modules importés avec succès")
+except ImportError as e:
+    logger.error(f"Erreur lors de l'importation des modules: {e}")
+    sys.exit(1)
+
+def test_setup_database():
+    """Teste le chargement et l'accès à la base de données des setups."""
+    logger.info("Test de la base de données des setups...")
     
-    # Initialiser les composants
-    print("\nInitialisation des composants...")
-    imitation_manager = ImitationLearningManager()
-    setup_db = SetupDatabaseManager()
-    text_processor = SetupTextProcessor()
-    
-    # Afficher des statistiques de base
-    print("\nStatistiques de la base de données de setups:")
-    stats = setup_db.get_statistics()
-    print(f"- Total de setups: {stats.get('total_setups', 0)}")
-    print(f"- Types de setup: {stats.get('setup_types', {})}")
-    print(f"- Distribution des actions: {stats.get('action_distribution', {})}")
-    
-    # Vérifier les modèles disponibles
-    print("\nModèles d'imitation disponibles:")
-    models = imitation_manager.get_available_models()
-    if models:
-        for i, model in enumerate(models):
-            print(f"{i+1}. {model.get('id')} - Créé le: {model.get('created')}")
-            print(f"   Type: {model.get('model_type')}, Précision: {model.get('accuracy', 0)*100:.1f}%")
-    else:
-        print("Aucun modèle disponible. Vous devez en entraîner un.")
-    
-    # Menu d'options
-    while True:
-        print("\nOptions:")
-        print("1. Ajouter un exemple de setup")
-        print("2. Entraîner un nouveau modèle")
-        print("3. Tester le modèle sur un exemple")
-        print("4. Afficher les types de setup disponibles")
-        print("5. Quitter")
+    try:
+        # Chemin vers le dossier de données
+        data_dir = current_dir / "data" / "setups"
         
-        choice = input("\nChoisissez une option (1-5): ")
+        # Vérification de l'existence du dossier
+        if not data_dir.exists():
+            logger.warning(f"Le dossier {data_dir} n'existe pas. Création du dossier...")
+            data_dir.mkdir(parents=True, exist_ok=True)
         
-        if choice == "1":
-            add_setup_example(setup_db, text_processor)
-        elif choice == "2":
-            train_model(imitation_manager)
-        elif choice == "3":
-            test_model(imitation_manager, text_processor)
-        elif choice == "4":
-            display_setup_types(setup_db)
-        elif choice == "5":
-            print("Au revoir!")
-            break
+        # Initialisation du gestionnaire de base de données
+        db_manager = SetupDatabaseManager(str(data_dir))
+        
+        # Liste des setups disponibles
+        setups = db_manager.list_all_setups()
+        logger.info(f"Nombre de setups trouvés: {len(setups)}")
+        
+        # Afficher les premiers setups (si disponibles)
+        if setups:
+            logger.info(f"Exemples de setups: {setups[:5]}")
+            
+            # Tester le chargement d'un setup
+            setup_data = db_manager.load_setup(setups[0])
+            logger.info(f"Setup chargé avec succès: {setups[0]}")
+            logger.info(f"Clés disponibles: {setup_data.keys()}")
         else:
-            print("Option non valide. Veuillez réessayer.")
-
-
-def add_setup_example(setup_db, text_processor):
-    """
-    Ajoute un exemple de setup dans la base de données.
-    """
-    print("\n=== Ajout d'un exemple de setup ===")
-    
-    # Demander les informations
-    setup_type = input("Type de setup (ex: breakout, support_resistance, trend_following): ")
-    action = input("Action de trading (BUY, SELL, WAIT): ").upper()
-    
-    # Créer une description à partir d'un template
-    template = text_processor.generate_template()
-    print(f"\nVoici un template pour la description:\n{template}")
-    
-    # Laisser l'utilisateur modifier le template ou entrer sa propre description
-    description = input("\nEntrez la description du setup (ou appuyez sur Entrée pour utiliser le template): ")
-    if not description.strip():
-        description = template
-    
-    # Pour ce test, nous ne demanderons pas d'image, nous utiliserons juste la description
-    # Dans une application réelle, vous voudriez charger une image de graphique
-    
-    # Générer un ID pour le fichier
-    setup_id = f"{setup_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    # Créer le répertoire de destination si nécessaire
-    data_dir = os.path.join("data", "training", setup_type)
-    os.makedirs(data_dir, exist_ok=True)
-    
-    # Chemin du fichier texte
-    text_path = os.path.join(data_dir, f"{setup_id}.txt")
-    
-    # Enregistrer la description
-    with open(text_path, 'w') as f:
-        f.write(description)
-    
-    print(f"Description enregistrée dans {text_path}")
-    
-    # Pour simuler une image, nous créons un fichier vide
-    image_path = os.path.join(data_dir, f"{setup_id}.png")
-    with open(image_path, 'w') as f:
-        f.write("# Placeholder for image data")
-    
-    print(f"Image placeholder créé dans {image_path}")
-    
-    # Rafraîchir l'index
-    setup_db.refresh_index()
-    print("Index rafraîchi. L'exemple a été ajouté à la base de données.")
-
-
-def train_model(imitation_manager):
-    """
-    Entraîne un nouveau modèle d'imitation.
-    """
-    print("\n=== Entraînement d'un nouveau modèle ===")
-    
-    # Demander le type de modèle
-    print("Types de modèles disponibles:")
-    print("1. baseline (Régression logistique)")
-    print("2. decision_tree (Arbre de décision)")
-    print("3. random_forest (Forêt aléatoire)")
-    
-    model_choice = input("Choisissez un type de modèle (1-3): ")
-    
-    if model_choice == "1":
-        model_type = "baseline"
-    elif model_choice == "2":
-        model_type = "decision_tree"
-    elif model_choice == "3":
-        model_type = "random_forest"
-    else:
-        print("Choix non valide. Utilisation du modèle baseline par défaut.")
-        model_type = "baseline"
-    
-    # Demander s'il faut filtrer par type de setup
-    use_filter = input("Voulez-vous filtrer les données par type de setup? (o/n): ").lower() == 'o'
-    
-    setup_types = None
-    if use_filter:
-        setup_types_input = input("Entrez les types de setup séparés par des virgules: ")
-        setup_types = [s.strip() for s in setup_types_input.split(',') if s.strip()]
-    
-    # Entraîner le modèle
-    print(f"\nEntraînement du modèle {model_type}...")
-    result = imitation_manager.train_imitation_model(model_type=model_type, training_data=None)
-    
-    if result:
-        print(f"Modèle entraîné avec succès!")
-        print(f"- Type: {result.get('model_type')}")
-        print(f"- Précision: {result.get('metrics', {}).get('accuracy', 0)*100:.1f}%")
-        print(f"- Nombre d'échantillons: {result.get('metrics', {}).get('sample_count', 0)}")
-    else:
-        print("Échec de l'entraînement du modèle. Vérifiez les logs pour plus de détails.")
-
-
-def test_model(imitation_manager, text_processor):
-    """
-    Teste le modèle actuel sur un exemple.
-    """
-    print("\n=== Test du modèle sur un exemple ===")
-    
-    # Vérifier si un modèle est chargé
-    if not imitation_manager.current_model:
-        print("Aucun modèle n'est actuellement chargé. Chargement du modèle le plus récent...")
-        model_result = imitation_manager.load_model()
+            logger.warning("Aucun setup trouvé dans la base de données")
         
-        if not model_result:
-            print("Échec du chargement du modèle. Veuillez d'abord entraîner un modèle.")
-            return
+        return db_manager, setups
     
-    # Demander une description
-    print("Entrez une description de setup pour tester le modèle.")
-    print("Exemple: Support à 38500, RSI en zone de survente, prix au-dessus de la MA20.")
-    description = input("\nDescription: ")
+    except Exception as e:
+        logger.error(f"Erreur lors du test de la base de données: {e}")
+        return None, []
+
+def test_text_processor(db_manager, setups):
+    """Teste le traitement des descriptions textuelles des setups."""
+    logger.info("Test du processeur de texte...")
     
-    if not description.strip():
-        print("Description vide. Test annulé.")
+    if not db_manager or not setups:
+        logger.error("Impossible de tester le processeur de texte sans base de données fonctionnelle")
+        return None
+    
+    try:
+        # Initialisation du processeur de texte
+        text_processor = SetupTextProcessor()
+        
+        processed_setups = []
+        for setup_id in setups[:5]:  # Traiter les 5 premiers setups
+            setup_data = db_manager.load_setup(setup_id)
+            
+            if 'description' in setup_data:
+                # Traitement de la description
+                processed_text = text_processor.process_setup_description(setup_data['description'])
+                logger.info(f"Setup {setup_id} traité avec succès")
+                logger.info(f"Extrait du traitement: {str(processed_text)[:100]}...")
+                
+                processed_setups.append({
+                    'id': setup_id,
+                    'original': setup_data['description'],
+                    'processed': processed_text
+                })
+            else:
+                logger.warning(f"Le setup {setup_id} ne contient pas de description")
+        
+        return text_processor, processed_setups
+    
+    except Exception as e:
+        logger.error(f"Erreur lors du test du processeur de texte: {e}")
+        return None, []
+
+def test_imitation_learning(db_manager, text_processor, setups):
+    """Teste le gestionnaire d'apprentissage par imitation."""
+    logger.info("Test du gestionnaire d'apprentissage par imitation...")
+    
+    if not db_manager or not text_processor:
+        logger.error("Impossible de tester l'apprentissage par imitation sans les composants nécessaires")
         return
     
-    # Structurer la description
-    structured_result = text_processor.text_to_structured_format(description)
-    structured_text = structured_result.get("structured_text", "")
-    
-    print(f"\nDescription structurée:\n{structured_text}")
-    
-    # Faire une prédiction
-    print("\nPrédiction en cours...")
-    prediction = imitation_manager.predict_from_setup(text_description=structured_text)
-    
-    if prediction:
-        print(f"\nAction prédite: {prediction.get('action')}")
+    try:
+        # Initialisation du gestionnaire d'apprentissage par imitation
+        imitation_manager = ImitationLearningManager(
+            db_manager=db_manager,
+            text_processor=text_processor
+        )
         
-        # Afficher les confiances si disponibles
-        if 'confidences' in prediction:
-            print("\nConfiances:")
-            for action, conf in sorted(prediction['confidences'].items(), key=lambda x: x[1], reverse=True):
-                print(f"- {action}: {conf*100:.1f}%")
+        # Préparation des données d'entraînement à partir des setups disponibles
+        logger.info("Préparation des données d'entraînement...")
+        training_data = imitation_manager.prepare_training_data(setups)
         
-        # Afficher l'explication
-        print("\nExplication:")
-        print(prediction.get('explanation', 'Aucune explication disponible.'))
-    else:
-        print("Échec de la prédiction. Vérifiez les logs pour plus de détails.")
-
-
-def display_setup_types(setup_db):
-    """
-    Affiche les types de setup disponibles.
-    """
-    print("\n=== Types de setup disponibles ===")
+        if training_data and len(training_data) > 0:
+            logger.info(f"Données d'entraînement préparées avec succès: {len(training_data)} exemples")
+            
+            # Visualisation des premières données
+            for i, (X, y) in enumerate(training_data[:2]):
+                logger.info(f"Exemple {i+1}:")
+                logger.info(f"Features: {X}")
+                logger.info(f"Target: {y}")
+            
+            # Entraînement d'un modèle simple
+            logger.info("Entraînement d'un modèle de base...")
+            model = imitation_manager.train_model(training_data, model_type="decision_tree")
+            
+            # Test du modèle sur un exemple
+            if model and training_data:
+                X_test, _ = training_data[0]
+                prediction = imitation_manager.predict(model, X_test)
+                logger.info(f"Prédiction sur l'exemple de test: {prediction}")
+                
+                # Sauvegarde du modèle pour référence
+                model_dir = current_dir / "data" / "models"
+                model_dir.mkdir(parents=True, exist_ok=True)
+                model_path = model_dir / "test_imitation_model.pkl"
+                imitation_manager.save_model(model, str(model_path))
+                logger.info(f"Modèle sauvegardé: {model_path}")
+        else:
+            logger.warning("Aucune donnée d'entraînement n'a pu être préparée")
     
-    # Rafraîchir l'index pour s'assurer qu'il est à jour
-    setup_db.refresh_index()
-    
-    # Récupérer les types de setup
-    setup_types = setup_db.get_all_setup_types()
-    
-    if setup_types:
-        for i, setup_type in enumerate(setup_types):
-            setups = setup_db.get_setups_by_type(setup_type)
-            print(f"{i+1}. {setup_type} ({len(setups)} exemples)")
-    else:
-        print("Aucun type de setup trouvé dans la base de données.")
+    except Exception as e:
+        logger.error(f"Erreur lors du test d'apprentissage par imitation: {e}")
 
+def main():
+    """Fonction principale exécutant tous les tests."""
+    logger.info("Démarrage des tests de l'infrastructure d'apprentissage par imitation...")
+    
+    # Test de la base de données
+    db_manager, setups = test_setup_database()
+    
+    # Test du processeur de texte
+    text_processor, processed_setups = test_text_processor(db_manager, setups)
+    
+    # Test de l'apprentissage par imitation
+    test_imitation_learning(db_manager, text_processor, setups)
+    
+    logger.info("Tests terminés")
 
 if __name__ == "__main__":
     main()
