@@ -249,7 +249,7 @@ class ImitationLearningManager:
         # Évaluation
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
-        classification_rep = classification_report(y_test, y_pred, target_names=[label_map[i] for i in range(len(label_map))], output_dict=True)
+        classification_rep = classification_report(y_test, y_pred, output_dict=True)
         conf_matrix = confusion_matrix(y_test, y_pred).tolist()
         
         # Créer le résultat
@@ -291,82 +291,46 @@ class ImitationLearningManager:
     def _save_model(self, model_result):
         """
         Sauvegarde un modèle entraîné.
-        
+    
         Args:
             model_result: Résultat de l'entraînement du modèle
         """
         try:
             import joblib
-        except ImportError:
-            self.logger.error("joblib non installé. Impossible de sauvegarder le modèle.")
+        except ImportError as e:
+            self.logger.error(f"joblib non installé. Impossible de sauvegarder le modèle: {str(e)}")
             return
+    
+        try:
+            # Créer un identifiant pour le modèle
+            model_id = f"{model_result['model_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            model_path = os.path.join(self.models_dir, f"{model_id}.joblib")
         
-        # Créer un identifiant pour le modèle
-        model_id = f"{model_result['model_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        model_path = os.path.join(self.models_dir, f"{model_id}.joblib")
+            # S'assurer que le répertoire existe
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
         
-        # Sauvegarder le modèle avec joblib
-        joblib.dump(model_result, model_path)
+            # Sauvegarder le modèle avec joblib
+            joblib.dump(model_result, model_path)
         
-        # Sauvegarder les métriques séparément en JSON pour faciliter l'accès
-        metrics_path = os.path.join(self.results_dir, f"{model_id}_metrics.json")
-        with open(metrics_path, 'w') as f:
-            json.dump({
+            # Sauvegarder les métriques séparément en JSON pour faciliter l'accès
+            metrics_path = os.path.join(self.results_dir, f"{model_id}_metrics.json")
+            os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        
+            metrics_data = {
                 "model_id": model_id,
                 "model_type": model_result["model_type"],
                 "metrics": model_result["metrics"],
                 "training_date": model_result["training_date"]
-            }, f, indent=2)
+            }
         
-        self.logger.info(f"Modèle sauvegardé: {model_path}")
-    
-    def load_model(self, model_id=None):
-        """
-        Charge un modèle entraîné.
+            with open(metrics_path, 'w') as f:
+                json.dump(metrics_data, f, indent=2)
         
-        Args:
-            model_id: Identifiant du modèle à charger (None = le plus récent)
-            
-        Returns:
-            Modèle chargé ou None en cas d'échec
-        """
-        try:
-            import joblib
-        except ImportError:
-            self.logger.error("joblib non installé. Impossible de charger le modèle.")
-            return None
-        
-        # Si aucun ID n'est spécifié, charger le modèle le plus récent
-        if model_id is None:
-            model_files = [f for f in os.listdir(self.models_dir) if f.endswith('.joblib')]
-            if not model_files:
-                self.logger.error("Aucun modèle trouvé.")
-                return None
-            
-            # Trier par date de modification
-            model_files.sort(key=lambda x: os.path.getmtime(os.path.join(self.models_dir, x)), reverse=True)
-            model_id = os.path.splitext(model_files[0])[0]
-        
-        # Construire le chemin complet
-        if not model_id.endswith('.joblib'):
-            model_path = os.path.join(self.models_dir, f"{model_id}.joblib")
-        else:
-            model_path = os.path.join(self.models_dir, model_id)
-        
-        # Vérifier si le fichier existe
-        if not os.path.exists(model_path):
-            self.logger.error(f"Modèle {model_id} non trouvé.")
-            return None
-        
-        # Charger le modèle
-        try:
-            model_result = joblib.load(model_path)
-            self.current_model = model_result
-            self.logger.info(f"Modèle {model_id} chargé avec succès.")
-            return model_result
+            self.logger.info(f"Modèle sauvegardé: {model_path}")
+            return True
         except Exception as e:
-            self.logger.error(f"Erreur lors du chargement du modèle {model_id}: {str(e)}")
-            return None
+            self.logger.error(f"Erreur lors de la sauvegarde du modèle: {str(e)}")
+            return False
     
     def predict_from_setup(self, setup_id=None, image_path=None, text_description=None):
         """
@@ -585,3 +549,63 @@ class ImitationLearningManager:
         except Exception as e:
             self.logger.error(f"Erreur lors de la suppression du modèle {model_id}: {str(e)}")
             return False
+        
+    def predict(self, features):
+        """
+        Prédit l'action à prendre pour un ensemble de caractéristiques données.
+    
+        Args:
+            features: Dict des caractéristiques
+        
+        Returns:
+            Prédiction avec confiance et explications
+        """
+        # Vérifier qu'un modèle est chargé
+        if self.current_model is None:
+            try:
+                self.load_model()
+                if self.current_model is None:
+                    self.logger.error("Aucun modèle disponible pour la prédiction.")
+                    return None
+            except Exception as e:
+                self.logger.error(f"Erreur lors du chargement du modèle: {str(e)}")
+                return None
+    
+        try:
+            # Encoder les caractéristiques
+            feature_map = self.current_model["feature_map"]
+            encoded_features = np.zeros(len(feature_map))
+        
+            for feature, value in features.items():
+                if feature in feature_map:
+                    encoded_features[feature_map[feature]] = value
+        
+            # Faire la prédiction
+            y_pred = self.current_model["model"].predict([encoded_features])[0]
+            action = self.current_model["label_map"][y_pred]
+        
+            # Obtenir les probabilités si disponibles
+            confidences = {}
+            if hasattr(self.current_model["model"], 'predict_proba'):
+                proba = self.current_model["model"].predict_proba([encoded_features])[0]
+                for i, p in enumerate(proba):
+                    label = self.current_model["label_map"].get(i, f"Unknown-{i}")
+                    confidences[label] = float(p)
+        
+            # Préparer l'explication
+            explanation = f"Prédiction basée sur {sum(encoded_features > 0)} caractéristiques."
+        
+            result = {
+                "action": action,
+                "confidences": confidences,
+                "explanation": explanation,
+                "features_used": [f for f, v in features.items() if v > 0]
+            }
+        
+            return result
+        
+        except Exception as e:
+            self.logger.error(f"Erreur lors de la prédiction: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None        

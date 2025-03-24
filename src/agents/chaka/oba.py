@@ -717,7 +717,9 @@ class Oba(AutonomousAgent):
                 return {"success": False, "message": "Échec de l'entraînement du modèle."}
                 
         except Exception as e:
-            self.logger.error(f"Erreur lors de l'entraînement du modèle: {str(e)}")
+            import traceback
+            stack_trace = traceback.format_exc()
+            self.logger.error(f"Erreur lors de l'entraînement du modèle: {str(e)}\n{stack_trace}")
             return {"success": False, "message": f"Erreur: {str(e)}"}
         
     def get_model_info(self):
