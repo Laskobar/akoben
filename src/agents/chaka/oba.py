@@ -443,47 +443,55 @@ class Oba(AutonomousAgent):
     def _extract_features_from_standardized_data(self, std_info):
         """
         Extrait les caractéristiques d'un setup standardisé pour la prédiction.
-        
+    
         Args:
             std_info: Informations standardisées du setup
-            
+        
         Returns:
             Dictionnaire des caractéristiques
         """
         features = {}
-        
+    
         # Extraire les caractéristiques pertinentes
-        if "patterns" in std_info:
+        if "patterns" in std_info and std_info["patterns"]:
             for pattern in std_info["patterns"]:
-                features[f"pattern_{pattern.lower().replace(' ', '_')}"] = 1
-        
-        if "indicators" in std_info:
+                if pattern:  # Vérifier que le pattern n'est pas None
+                    features[f"pattern_{pattern.lower().replace(' ', '_')}"] = 1
+    
+        if "indicators" in std_info and std_info["indicators"]:
             for indicator in std_info["indicators"]:
-                features[f"indicator_{indicator.lower().replace(' ', '_')}"] = 1
-        
+                if indicator:  # Vérifier que l'indicateur n'est pas None
+                    features[f"indicator_{indicator.lower().replace(' ', '_')}"] = 1
+    
         # Calculer le ratio risque/récompense si possible
-        if "stop_loss" in std_info and "take_profit" in std_info and "entry_price" in std_info:
-            entry = float(std_info["entry_price"])
-            sl = float(std_info["stop_loss"])
-            tp = float(std_info["take_profit"])
+        if all(key in std_info and std_info[key] is not None for key in ["stop_loss", "take_profit", "entry_price"]):
+            try:
+                entry = float(std_info["entry_price"])
+                sl = float(std_info["stop_loss"])
+                tp = float(std_info["take_profit"])
             
-            risk = abs(entry - sl)
-            reward = abs(tp - entry)
+                risk = abs(entry - sl)
+                reward = abs(tp - entry)
             
-            if risk > 0:
-                rr_ratio = reward / risk
-                features["risk_reward_ratio"] = rr_ratio
-        
+                if risk > 0:
+                    rr_ratio = reward / risk
+                    features["risk_reward_ratio"] = rr_ratio
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Erreur de conversion lors du calcul du ratio R/R: {e}")
+    
         # Ajouter d'autres caractéristiques si disponibles
-        if "confidence" in std_info:
-            features["confidence"] = std_info["confidence"]
-        
-        if "timeframe" in std_info:
+        if "confidence" in std_info and std_info["confidence"] is not None:
+            try:
+                features["confidence"] = float(std_info["confidence"])
+            except (ValueError, TypeError):
+                pass
+    
+        if "timeframe" in std_info and std_info["timeframe"]:
             features[f"timeframe_{std_info['timeframe'].lower()}"] = 1
-        
-        if "instrument" in std_info:
+    
+        if "instrument" in std_info and std_info["instrument"]:
             features[f"instrument_{std_info['instrument'].lower()}"] = 1
-        
+    
         return features
     
     def act(self, decisions):
@@ -711,3 +719,195 @@ class Oba(AutonomousAgent):
         except Exception as e:
             self.logger.error(f"Erreur lors de l'entraînement du modèle: {str(e)}")
             return {"success": False, "message": f"Erreur: {str(e)}"}
+        
+    def get_model_info(self):
+        """
+        Récupère les informations sur le modèle actuel.
+        
+        Returns:
+            Informations sur le modèle
+        """
+        if not self.model_loaded:
+            return {"status": "not_loaded", "message": "Aucun modèle chargé."}
+        
+        try:
+            # Récupérer les informations du modèle
+            current_model = self.imitation_manager.current_model
+            
+            if not current_model:
+                return {"status": "error", "message": "Informations du modèle non disponibles."}
+            
+            return {
+                "status": "loaded",
+                "model_id": self.model_id,
+                "model_type": current_model.get("model_type"),
+                "training_date": current_model.get("training_date"),
+                "metrics": current_model.get("metrics", {}),
+                "feature_count": len(current_model.get("feature_map", {})),
+                "label_count": len(current_model.get("label_map", {}))
+            }
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Erreur: {str(e)}"}
+    
+    def get_all_available_models(self):
+        """
+        Récupère la liste de tous les modèles disponibles.
+        
+        Returns:
+            Liste des modèles disponibles
+        """
+        return self.imitation_manager.get_available_models()
+    
+    def get_standardized_setups_stats(self):
+        """
+        Récupère des statistiques sur les setups standardisés disponibles.
+        
+        Returns:
+            Statistiques sur les setups standardisés
+        """
+        # Rafraîchir la liste des setups disponibles
+        self.state["available_standardized_setups"] = self._get_available_standardized_setups()
+        
+        # Initialiser les compteurs
+        total_setups = len(self.state["available_standardized_setups"])
+        buy_setups = 0
+        sell_setups = 0
+        undefined_action = 0
+        setups_with_patterns = 0
+        setups_with_indicators = 0
+        setups_with_price_levels = 0
+        patterns_counts = {}
+        indicators_counts = {}
+        
+        # Analyser chaque setup
+        for setup in self.state["available_standardized_setups"]:
+            std_info = setup.get("standardized_info", {})
+            
+            # Compter par action
+            action = std_info.get("action")
+            if action:
+                if action == "BUY":
+                    buy_setups += 1
+                elif action == "SELL":
+                    sell_setups += 1
+            else:
+                undefined_action += 1
+            
+            # Compter les setups avec patterns
+            if "patterns" in std_info and std_info["patterns"]:
+                setups_with_patterns += 1
+                for pattern in std_info["patterns"]:
+                    patterns_counts[pattern] = patterns_counts.get(pattern, 0) + 1
+            
+            # Compter les setups avec indicateurs
+            if "indicators" in std_info and std_info["indicators"]:
+                setups_with_indicators += 1
+                for indicator in std_info["indicators"]:
+                    indicators_counts[indicator] = indicators_counts.get(indicator, 0) + 1
+            
+            # Compter les setups avec niveaux de prix
+            if any([key in std_info for key in ["entry_price", "stop_loss", "take_profit"]]):
+                setups_with_price_levels += 1
+        
+        # Compiler les statistiques
+        return {
+            "total_setups": total_setups,
+            "buy_setups": buy_setups,
+            "sell_setups": sell_setups,
+            "undefined_action": undefined_action,
+            "setups_with_patterns": setups_with_patterns,
+            "setups_with_indicators": setups_with_indicators,
+            "setups_with_price_levels": setups_with_price_levels,
+            "patterns_counts": patterns_counts,
+            "indicators_counts": indicators_counts,
+            "directory": self.standardized_data_path
+        }
+    
+    def test_model_on_standardized_setups(self, test_size=0.3, random_seed=42):
+        """
+        Teste le modèle sur un sous-ensemble des setups standardisés.
+        
+        Args:
+            test_size: Proportion des données à utiliser pour le test (0.0 à 1.0)
+            random_seed: Graine pour la reproductibilité des résultats
+            
+        Returns:
+            Résultats des tests
+        """
+        # Vérifier que le modèle est chargé
+        if not self.model_loaded and not self._load_model():
+            return {"success": False, "message": "Aucun modèle d'imitation disponible."}
+        
+        # Rafraîchir la liste des setups disponibles
+        self.state["available_standardized_setups"] = self._get_available_standardized_setups()
+        
+        # Préparer les données pour le test
+        import random
+        random.seed(random_seed)
+        
+        # Mélanger les setups disponibles
+        setups = self.state["available_standardized_setups"].copy()
+        random.shuffle(setups)
+        
+        # Calculer le nombre de setups pour le test
+        test_count = max(1, int(len(setups) * test_size))
+        test_setups = setups[:test_count]
+        
+        self.logger.info(f"Test du modèle sur {test_count} setups standardisés...")
+        
+        # Initialiser les résultats
+        results = {
+            "total_tests": test_count,
+            "correct_predictions": 0,
+            "incorrect_predictions": 0,
+            "accuracy": 0.0,
+            "details": []
+        }
+        
+        # Tester chaque setup
+        for setup in test_setups:
+            std_info = setup.get("standardized_info", {})
+            expected_action = std_info.get("action")
+            
+            # Ignorer les setups sans action définie
+            if not expected_action:
+                results["total_tests"] -= 1
+                continue
+            
+            # Extraire les caractéristiques
+            features = self._extract_features_from_standardized_data(std_info)
+            
+            # Faire une prédiction
+            prediction = self.imitation_manager.predict(features)
+            
+            if not prediction:
+                results["total_tests"] -= 1
+                continue
+            
+            predicted_action = prediction.get("action")
+            confidence = max(prediction.get("confidences", {}).values()) if prediction.get("confidences") else 0.0
+            
+            # Enregistrer les détails du test
+            test_result = {
+                "setup_id": setup.get("id"),
+                "expected_action": expected_action,
+                "predicted_action": predicted_action,
+                "confidence": confidence,
+                "correct": expected_action == predicted_action
+            }
+            
+            results["details"].append(test_result)
+            
+            # Mettre à jour les compteurs
+            if expected_action == predicted_action:
+                results["correct_predictions"] += 1
+            else:
+                results["incorrect_predictions"] += 1
+        
+        # Calculer la précision
+        if results["total_tests"] > 0:
+            results["accuracy"] = results["correct_predictions"] / results["total_tests"]
+        
+        self.logger.info(f"Test terminé. Précision: {results['accuracy']:.2%}")
+        return results        
