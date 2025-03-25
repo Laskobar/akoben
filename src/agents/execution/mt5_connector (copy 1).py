@@ -39,53 +39,31 @@ class MT5FileConnector:
     def connect(self):
         """
         Établit une connexion avec le terminal MetaTrader 5 via des fichiers partagés
-    
+        
         Returns:
             bool: True si la connexion est réussie, False sinon
         """
         if self.connected:
             print("Déjà connecté à MetaTrader 5")
             return True
-    
+        
         try:
             # Vérifier si le fichier de réponse existe
             if os.path.exists(self.response_file):
                 # Lire le fichier pour voir s'il contient "READY"
                 with codecs.open(self.response_file, 'r', encoding=self.encoding, errors='ignore') as f:
                     content = f.read().strip()
-                    print(f"DÉBOGAGE - Contenu du fichier de réponse: '{content}'")
+                    print(f"Contenu du fichier de réponse: '{content}'")
                     if content == "READY":
                         print("MT5 est prêt (READY trouvé)")
                         self.connected = True
                         return True
-                    else:
-                        print(f"Le fichier existe mais ne contient pas 'READY' - contenu actuel: {content}")
-                        # Essayer de réinitialiser le fichier
-                        with codecs.open(self.response_file, 'w', encoding=self.encoding) as f:
-                            f.write("READY")
-                        print("Fichier réinitialisé à 'READY', tentative de reconnexion...")
-                        time.sleep(1)
-                        # Relire le fichier pour confirmation
-                        with codecs.open(self.response_file, 'r', encoding=self.encoding, errors='ignore') as f:
-                            content = f.read().strip()
-                            if content == "READY":
-                                print("MT5 est maintenant prêt après réinitialisation")
-                                self.connected = True
-                                return True
             else:
                 print("Fichier de réponse non trouvé - MT5 n'est peut-être pas en cours d'exécution")
-                # Créer le fichier s'il n'existe pas
-                try:
-                    with codecs.open(self.response_file, 'w', encoding=self.encoding) as f:
-                        f.write("READY")
-                    print("Fichier de réponse créé avec 'READY'")
-                except Exception as e:
-                    print(f"Erreur lors de la création du fichier de réponse: {e}")
                 return False
         except Exception as e:
             print(f"Erreur lors de la connexion à MetaTrader 5: {e}")
             return False
-    
     
     def send_command(self, command, timeout=None):
         """
