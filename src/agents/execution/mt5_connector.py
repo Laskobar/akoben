@@ -24,7 +24,7 @@ class MT5FileConnector:
         self.connected = False
         
         # Chemins des fichiers de communication (utilise le dossier Files de MT5)
-        mt5_path = os.path.expanduser("~/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files")
+        mt5_path = os.path.expanduser("~/.wine64/drive_c/Program Files/MetaTrader 5/MQL5/Files")
         self.request_file = os.path.join(mt5_path, "requests.txt")
         self.response_file = os.path.join(mt5_path, "responses.txt")
         
