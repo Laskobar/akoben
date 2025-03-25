@@ -332,6 +332,71 @@ class ImitationLearningManager:
             self.logger.error(f"Erreur lors de la sauvegarde du modèle: {str(e)}")
             return False
     
+    def load_model(self, model_id=None):
+        """
+        Charge un modèle d'imitation entraîné.
+    
+        Args:
+            model_id: Identifiant du modèle à charger (None = dernier modèle)
+        
+        Returns:
+            Modèle chargé ou None en cas d'échec
+        """
+        try:
+            import joblib
+        except ImportError as e:
+            self.logger.error(f"joblib non installé. Impossible de charger le modèle: {str(e)}")
+            return None
+    
+        try:
+            # Si aucun ID spécifié, récupérer le dernier modèle disponible
+            if model_id is None:
+                models = self.get_available_models()
+                if not models:
+                    self.logger.warning("Aucun modèle disponible.")
+                    return None
+            
+                # Utiliser le modèle le plus récent
+                model_path = models[0]["path"]
+            else:
+                # Chercher un modèle spécifique
+                model_path = os.path.join(self.models_dir, f"{model_id}.joblib")
+            
+                # Vérifier si le modèle existe
+                if not os.path.exists(model_path):
+                    # Essayer avec différentes extensions
+                    model_path = os.path.join(self.models_dir, f"{model_id}")
+                    if not os.path.exists(model_path):
+                        self.logger.error(f"Modèle {model_id} non trouvé.")
+                        return None
+        
+            # Charger le modèle
+            self.logger.info(f"Chargement du modèle: {model_path}")
+            model_result = joblib.load(model_path)
+        
+            # Vérifier la structure du modèle
+            required_keys = ["model", "model_type", "feature_map", "label_map"]
+            if not all(key in model_result for key in required_keys):
+                self.logger.error(f"Structure de modèle invalide: manque des clés requises.")
+                return None
+        
+            # Définir comme modèle actuel
+            self.current_model = model_result
+        
+            # Journaliser les informations
+            self.logger.info(f"Modèle {model_result.get('model_name', 'inconnu')} chargé avec succès.")
+            self.logger.info(f"Type de modèle: {model_result.get('model_type')}")
+            self.logger.info(f"Caractéristiques: {len(model_result.get('feature_map', {}))}")
+            self.logger.info(f"Classes: {len(model_result.get('label_map', {}))}")
+        
+            return model_result
+        
+        except Exception as e:
+            self.logger.error(f"Erreur lors du chargement du modèle: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+
     def predict_from_setup(self, setup_id=None, image_path=None, text_description=None):
         """
         Prédit l'action à prendre pour un setup donné.
