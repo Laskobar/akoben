@@ -76,7 +76,14 @@ class Kora:
         }
     
     def _simulate_detections(self, image):
-        """Simule la détection d'éléments visuels sur un graphique de trading"""
+        """
+        Simule la détection d'éléments visuels sur un graphique de trading
+        
+        Dans une implémentation réelle, cette méthode utiliserait YOLOv8
+        """
+        # Simuler différents types de détections qu'un modèle YOLOv8 pourrait identifier
+        # sur un graphique de trading
+        
         width, height = image.size
         
         # Simuler quelques bougies japonaises détectées
@@ -90,6 +97,11 @@ class Kora:
                 "type": "bearish",
                 "confidence": 0.88,
                 "bbox": [int(width * 0.82), int(height * 0.45), int(width * 0.83), int(height * 0.55)]
+            },
+            {
+                "type": "doji",
+                "confidence": 0.75,
+                "bbox": [int(width * 0.84), int(height * 0.48), int(width * 0.85), int(height * 0.51)]
             }
         ]
         
@@ -104,72 +116,120 @@ class Kora:
                 "type": "resistance_level",
                 "confidence": 0.82,
                 "bbox": [int(width * 0.1), int(height * 0.3), int(width * 0.9), int(height * 0.31)]
+            },
+            {
+                "type": "ma20",
+                "confidence": 0.95,
+                "bbox": [int(width * 0.1), int(height * 0.45), int(width * 0.9), int(height * 0.45)]
+            }
+        ]
+        
+        # Simuler quelques patterns potentiels
+        patterns = [
+            {
+                "type": "double_bottom",
+                "confidence": 0.65,
+                "bbox": [int(width * 0.5), int(height * 0.7), int(width * 0.7), int(height * 0.8)]
             }
         ]
         
         return {
             "candles": candles,
             "indicators": indicators,
-            "patterns": []
+            "patterns": patterns
         }
     
     def _analyze_detections(self, detections, image_source):
-        """Utilise le LLM pour analyser les détections"""
+        """
+        Utilise le LLM pour analyser les détections et fournir un aperçu
+        """
+        # Préparer un prompt pour le LLM
         candles_info = "\n".join([f"- {c['type']} (confiance: {c['confidence']:.2f})" for c in detections["candles"]])
         indicators_info = "\n".join([f"- {i['type']} (confiance: {i['confidence']:.2f})" for i in detections["indicators"]])
+        patterns_info = "\n".join([f"- {p['type']} (confiance: {p['confidence']:.2f})" for p in detections["patterns"]])
         
         prompt = f"""
-        Analyse technique pour {image_source}:
+        En tant qu'expert en analyse technique de graphiques de trading, examine ces détections d'éléments visuels clés sur un graphique ({image_source}):
         
-        Bougies détectées:
+        Bougies japonaises détectées:
         {candles_info}
         
-        Niveaux clés:
+        Indicateurs techniques détectés:
         {indicators_info}
+        
+        Patterns potentiels détectés:
+        {patterns_info}
+        
+        Fournis une analyse concise de ces éléments visuels, en indiquant:
+        1. Les éléments les plus significatifs et leur implication
+        2. Les configurations techniques potentielles
+        3. Les zones d'intérêt à surveiller
+        
+        Reste factuel et objectif dans ton analyse.
         """
-        return self.llm_caller(prompt) if self.llm_caller else "Analyse LLM désactivée"
+        
+        # Appeler le LLM
+        return self.llm_caller(prompt)
     
-    def save_screenshot(self, symbol: str, timeframe: str, config: dict):
+    def draw_annotations(self, image_path, detections, output_path=None):
         """
-        Gère la capture manuelle des graphiques
+        Dessine les annotations des détections sur l'image
+        
         Args:
-            symbol: Symbole (ex: 'US30')
-            timeframe: Période (ex: 'M1')
-            config: {'screenshot_path': '/chemin/vers/dossier'}
+            image_path: Chemin de l'image
+            detections: Résultats des détections
+            output_path: Chemin de sortie pour l'image annotée
+                         (si None, utilise le chemin original avec un suffixe)
+        
+        Returns:
+            Chemin de l'image annotée
         """
         try:
-            os.makedirs(config['screenshot_path'], exist_ok=True)
-            filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M')}_{timeframe}_{symbol}.png"
-            path = os.path.join(config['screenshot_path'], filename)
+            # Ouvrir l'image
+            image = Image.open(image_path)
+            draw = ImageDraw.Draw(image)
             
-            print(f"""
-            === INSTRUCTIONS CAPTURE ===
-            1. Ouvrez TradingView {symbol} {timeframe}
-            2. Configurez votre graphique
-            3. Prenez un screenshot
-            4. Sauvegardez-le sous : {path}
-            Appuyez sur Entrée quand c'est fait...""")
-            
-            input()  # Pause manuelle
-            
-            if os.path.exists(path):
-                print(f"[SUCCÈS] Capture sauvegardée : {path}")
-                return path
-            else:
-                print("[ERREUR] Fichier non trouvé. Vérifiez :")
-                print(f"- Le chemin {path}")
-                print(f"- Les permissions du dossier")
-                return None
+            # Dessiner les bougies
+            for candle in detections.get("candles", []):
+                bbox = candle["bbox"]
+                # Couleur selon le type de bougie
+                color = {
+                    "bullish": "green",
+                    "bearish": "red",
+                    "doji": "blue"
+                }.get(candle["type"], "yellow")
                 
+                draw.rectangle(bbox, outline=color, width=2)
+                draw.text((bbox[0], bbox[1] - 10), f"{candle['type']} ({candle['confidence']:.2f})", fill=color)
+            
+            # Dessiner les indicateurs
+            for indicator in detections.get("indicators", []):
+                bbox = indicator["bbox"]
+                draw.line([bbox[0], bbox[1], bbox[2], bbox[3]], fill="blue", width=2)
+                draw.text((bbox[0], bbox[1] - 10), f"{indicator['type']}", fill="blue")
+            
+            # Dessiner les patterns
+            for pattern in detections.get("patterns", []):
+                bbox = pattern["bbox"]
+                draw.rectangle(bbox, outline="purple", width=2)
+                draw.text((bbox[0], bbox[1] - 10), f"{pattern['type']}", fill="purple")
+            
+            # Sauvegarder l'image annotée
+            if output_path is None:
+                name, ext = os.path.splitext(image_path)
+                output_path = f"{name}_annotated{ext}"
+            
+            image.save(output_path)
+            return output_path
+        
         except Exception as e:
-            print(f"[ERREUR CRITIQUE] {str(e)}")
+            print(f"Erreur lors de l'annotation de l'image: {e}")
             return None
 
-# Exemple d'utilisation minimaliste
-if __name__ == "__main__":
-    kora = Kora()
-    kora.save_screenshot(
-        symbol="US30",
-        timeframe="M1",
-        config={'screenshot_path': os.path.expanduser('~/akoben-screenshots')}
-    )
+    # Dans /home/lasko/akoben-clean/src/agents/vision/kora.py
+    def save_screenshot(symbol: str, timeframe: str):
+        """Attend une capture manuelle et la sauvegarde"""
+        path = f"{config['screenshot_path']}/{datetime.now().strftime('%Y-%m-%d_%H-%M')}_{timeframe}_{symbol}.png"
+        input(f"Prêt pour {symbol} {timeframe} ? Appuyez sur Entrée après la capture...")
+        # Ici vous collerez manuellement le screenshot dans le dossier
+        return path    
