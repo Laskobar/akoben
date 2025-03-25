@@ -225,3 +225,11 @@ class Kora:
         except Exception as e:
             print(f"Erreur lors de l'annotation de l'image: {e}")
             return None
+
+    # Dans /home/lasko/akoben-clean/src/agents/vision/kora.py
+    def save_screenshot(symbol: str, timeframe: str):
+        """Attend une capture manuelle et la sauvegarde"""
+        path = f"{config['screenshot_path']}/{datetime.now().strftime('%Y-%m-%d_%H-%M')}_{timeframe}_{symbol}.png"
+        input(f"Prêt pour {symbol} {timeframe} ? Appuyez sur Entrée après la capture...")
+        # Ici vous collerez manuellement le screenshot dans le dossier
+        return path    
