@@ -1,109 +1,1 @@
-# ~/akoben-clean/src/agents/vision/vision_analyzer.py
-import cv2
-import os
-import numpy as np
-import math
-
-# Définir les chemins de base
-AKOBEN_CLEAN_DIR = "/home/lasko/akoben-clean"
-AKOBEN_RUNTIME_DIR = "/home/lasko/akoben"
-
-def analyze_image_lines(relative_image_path_in_runtime: str):
-    """
-    Charge une image, détecte les contours, puis détecte les lignes droites
-    (horizontales et verticales) via la transformée de Hough probabiliste.
-    Sauvegarde une image avec les lignes détectées dessinées.
-
-    Args:
-        relative_image_path_in_runtime (str): Chemin relatif de l'image DANS ~/akoben/tradingview_captures/
-    """
-    image_path = os.path.join(AKOBEN_RUNTIME_DIR, "tradingview_captures", relative_image_path_in_runtime)
-    print(f"Analyse des lignes pour l'image : {image_path}")
-
-    if not os.path.exists(image_path):
-        print(f"ERREUR : Le fichier image n'existe pas : {image_path}")
-        return
-
-    # Charger l'image en couleur pour y dessiner plus tard
-    img_color = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    if img_color is None:
-        print(f"ERREUR : Impossible de charger l'image : {image_path}")
-        return
-    height, width, _ = img_color.shape
-    print(f"Image couleur chargée ({height}x{width}).")
-
-    # Prétraitement : Niveaux de gris, Flou, Canny (comme avant)
-    img_gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY)
-    img_blurred = cv2.GaussianBlur(img_gray, (5, 5), 0)
-    edges = cv2.Canny(img_blurred, 50, 150)
-    print(f"  - Prétraitement (Gris, Flou, Canny) effectué.")
-
-    # 2. Détection de lignes avec HoughLinesP
-    # Arguments de cv2.HoughLinesP:
-    # - edges: L'image des contours (sortie de Canny).
-    # - rho=1: Résolution de distance en pixels.
-    # - theta=np.pi/180: Résolution angulaire en radians (ici, 1 degré).
-    # - threshold=50: Nombre minimum d'intersections pour détecter une ligne.
-    # - minLineLength=50: Longueur minimale d'une ligne en pixels.
-    # - maxLineGap=10: Écart maximal autorisé entre des segments pour les considérer comme une seule ligne.
-    # Vous devrez peut-être ajuster threshold, minLineLength et maxLineGap pour vos graphiques.
-    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
-
-    horizontal_lines = []
-    vertical_lines = []
-
-    if lines is not None:
-        print(f"  - HoughLinesP a détecté {len(lines)} segments de ligne potentiels.")
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-
-            # Calculer l'angle de la ligne
-            angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-
-            # Filtrer les lignes approximativement horizontales (proches de 0 ou 180 degrés)
-            # Tolérance de +/- quelques degrés (ex: 2 degrés)
-            if abs(angle) < 2 or abs(angle - 180) < 2 or abs(angle + 180) < 2 :
-                 # Vérifier aussi une longueur minimale pour éviter les petits segments bruités
-                length = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-                if length > 50: # Gardons la même longueur minimale que HoughLinesP ou un peu plus
-                    horizontal_lines.append(line[0])
-            # Filtrer les lignes approximativement verticales (proches de 90 ou -90 degrés)
-            elif abs(angle - 90) < 2 or abs(angle + 90) < 2:
-                length = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-                if length > 50:
-                     vertical_lines.append(line[0])
-        print(f"  - Filtré : {len(horizontal_lines)} lignes horizontales et {len(vertical_lines)} lignes verticales.")
-    else:
-        print("  - Aucune ligne détectée par HoughLinesP.")
-
-    # 3. Dessiner les lignes détectées sur une copie de l'image originale
-    img_with_lines = img_color.copy()
-
-    # Dessiner les lignes horizontales en bleu (BGR: 255, 0, 0)
-    for x1, y1, x2, y2 in horizontal_lines:
-        cv2.line(img_with_lines, (x1, y1), (x2, y2), (255, 0, 0), 2) # Bleu, épaisseur 2
-
-    # Dessiner les lignes verticales en vert (BGR: 0, 255, 0)
-    for x1, y1, x2, y2 in vertical_lines:
-        cv2.line(img_with_lines, (x1, y1), (x2, y2), (0, 255, 0), 2) # Vert, épaisseur 2
-
-    # 4. Sauvegarder l'image avec les lignes
-    output_lines_path = os.path.join(AKOBEN_CLEAN_DIR, "output_detected_lines.png")
-    try:
-        cv2.imwrite(output_lines_path, img_with_lines)
-        print(f"  - Image avec lignes horizontales (bleu) et verticales (vert) sauvegardée : {output_lines_path}")
-    except Exception as e:
-        print(f"  - ERREUR lors de la sauvegarde de l'image avec lignes : {e}")
-
-# --- Point d'entrée ---
-if __name__ == "__main__":
-    print("--- Test d'analyse d'image (Détection de Lignes Horizontales/Verticales) ---")
-
-    test_image_relative_path = '2025-03-26/setup_20250326083927/original.png' # <--- Vérifiez si c'est toujours bon
-
-    if test_image_relative_path == 'VOTRE_IMAGE_ICI.png':
-         print("\n!!! ATTENTION : Veuillez modifier la variable 'test_image_relative_path' !!!\n")
-    else:
-        analyze_image_lines(test_image_relative_path)
-
-    print("--- Fin du test ---")
+# ~/akoben-clean/src/agents/vision/vision_analyzer.pyimport cv2import osimport numpy as npimport mathfrom scipy.signal import find_peaks# Définir les chemins de baseAKOBEN_CLEAN_DIR = "/home/lasko/akoben-clean"AKOBEN_RUNTIME_DIR = "/home/lasko/akoben"# --- analyze_rsi_zone_fixed_percent (INCHANGÉ) ---def analyze_rsi_zone_fixed_percent(relative_image_path_in_runtime: str,                                   start_percent: float = 0.59,                                   end_percent: float = 0.71):    # ... (code identique) ...    image_path = os.path.join(AKOBEN_RUNTIME_DIR, "tradingview_captures", relative_image_path_in_runtime)    # ... (reste du code identique) ...    img_color = cv2.imread(image_path, cv2.IMREAD_COLOR)    if img_color is None: return None, None    height, width, _ = img_color.shape    # ... (reste du code identique) ...    rsi_y_top = int(height * start_percent)    rsi_y_bottom = int(height * end_percent)    # ... (reste du code identique) ...    rsi_roi = img_color[rsi_y_top:rsi_y_bottom, :]    # ... (reste du code identique) ...    return rsi_roi, (rsi_y_top, rsi_y_bottom)# --- extract_rsi_curve_by_color (INCHANGÉ) ---def extract_rsi_curve_by_color(rsi_roi_image: np.ndarray):    # ... (code identique) ...    if rsi_roi_image is None: return None    # ... (reste du code identique) ...    hsv_roi = cv2.cvtColor(rsi_roi_image, cv2.COLOR_BGR2HSV)    # Plage HSV basée sur #7e57c2    # ... (calcul plage identique) ...    lower_purple = np.array([125, 100, 149])    upper_purple = np.array([135, 200, 254]) # Utilisation de la plage validée    # ... (reste du code identique) ...    mask = cv2.inRange(hsv_roi, lower_purple, upper_purple)    # ... (nettoyage masque identique) ...    mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3,3), np.uint8), iterations=1)    # ... (sauvegarde identique) ...    return mask_closed# --- find_rsi_extrema (INCHANGÉ) ---def find_rsi_extrema(rsi_mask: np.ndarray, prominence_threshold: float = 3.0, distance_threshold: int = 15):    # ... (code identique) ...    if rsi_mask is None or rsi_mask.ndim != 2: return [], []    # ... (extraction courbe identique) ...    signal_y = np.array(rsi_curve_y) # rsi_curve_y doit être calculée avant    rsi_curve_x = list(range(len(signal_y))) # Assumons x simple si non extrait avant    # ... (find_peaks identique) ...    # Assurez-vous que rsi_curve_x et rsi_curve_y sont correctement peuplées dans la version complète de la fonction    # Calcul de rsi_curve_y et rsi_curve_x (extrait de la fonction originale pour clarté)    h, w = rsi_mask.shape    rsi_curve_y = []    rsi_curve_x = []    for x in range(w):        y_coords = np.where(rsi_mask[:, x] == 255)[0]        if len(y_coords) > 0:            y_avg = int(np.mean(y_coords))            rsi_curve_y.append(y_avg)            rsi_curve_x.append(x)    if not rsi_curve_y: return [],[]    signal_y = np.array(rsi_curve_y)    # Recherche pics/creux    peaks_indices, _ = find_peaks(-signal_y, prominence=prominence_threshold, distance=distance_threshold)    peaks_coords = [(rsi_curve_x[i], rsi_curve_y[i]) for i in peaks_indices]    troughs_indices, _ = find_peaks(signal_y, prominence=prominence_threshold, distance=distance_threshold)    troughs_coords = [(rsi_curve_x[i], rsi_curve_y[i]) for i in troughs_indices]    # ... (reste du code identique) ...    return peaks_coords, troughs_coords# --- NOUVELLE FONCTION : analyze_price_zone_fixed_percent ---def analyze_price_zone_fixed_percent(relative_image_path_in_runtime: str,                                     start_percent: float = 0.06, # Commence après le haut (~6%)                                     end_percent: float = 0.59): # Finit juste avant le RSI (~59%)    """    Isole la zone du graphique principal (prix, bougies, zigzag) en utilisant    des pourcentages fixes de la hauteur totale de l'image.    """    image_path = os.path.join(AKOBEN_RUNTIME_DIR, "tradingview_captures", relative_image_path_in_runtime)    print(f"Analyse (Pourcentage Fixe) de la zone PRIX pour : {image_path}")    if not os.path.exists(image_path):        print(f"ERREUR : Le fichier image n'existe pas : {image_path}")        return None, None    img_color = cv2.imread(image_path, cv2.IMREAD_COLOR)    if img_color is None:        print(f"ERREUR : Impossible de charger l'image : {image_path}")        return None, None    height, width, _ = img_color.shape    print(f"Image couleur chargée ({height}x{width}).")    if not (0.0 <= start_percent < end_percent <= 1.0):        print(f"ERREUR: Pourcentages invalides (start={start_percent}, end={end_percent}).")        return None, None    price_y_top = int(height * start_percent)    price_y_bottom = int(height * end_percent)    if price_y_top >= price_y_bottom: price_y_bottom = price_y_top + 1    price_y_top = max(0, price_y_top)    price_y_bottom = min(height, price_y_bottom)    print(f"  - Zone PRIX (Pourcentage Fixe) estimée : Y de {price_y_top} à {price_y_bottom}")    price_roi = img_color[price_y_top:price_y_bottom, :]    output_price_roi_path = os.path.join(AKOBEN_CLEAN_DIR, "output_price_roi_fixed.png")    try:        cv2.imwrite(output_price_roi_path, price_roi)        print(f"  - Image ROI du PRIX (Fixe) sauvegardée : {output_price_roi_path}")        return price_roi, (price_y_top, price_y_bottom)    except Exception as e:        print(f"  - ERREUR lors de la sauvegarde du ROI PRIX (Fixe) : {e}")        return None, None# --- NOUVELLE FONCTION : extract_zigzag_by_color ---def extract_zigzag_by_color(price_roi_image: np.ndarray):    """    Extrait la ligne ZigZag d'un ROI de prix en utilisant un seuillage de couleur HSV.    """    if price_roi_image is None:        print("ERREUR: ROI Prix invalide fourni pour l'extraction de couleur.")        return None    print("Tentative d'extraction de la ligne ZigZag par couleur...")    hsv_roi = cv2.cvtColor(price_roi_image, cv2.COLOR_BGR2HSV)    # Définir la plage de couleur pour le BLEU VIF du ZigZag en HSV    # Le bleu vif a une Teinte autour de 100-120. Saturation et Valeur élevées.    # À ajuster après test !    # lower_blue = np.array([95, 100, 100])    # upper_blue = np.array([125, 255, 255])    # === PLAGE BLEU V2 (plus resserrée, basée sur l'image exemple) ===    lower_blue = np.array([100, 150, 100]) # Saturation et Valeur Min plus hautes    upper_blue = np.array([120, 255, 255])    print(f"  - Utilisation de la plage HSV pour ZigZag: Bas={lower_blue}, Haut={upper_blue}")    mask = cv2.inRange(hsv_roi, lower_blue, upper_blue)    # Nettoyage morphologique - Peut-être juste une fermeture pour connecter segments    kernel_size = 3    kernel = np.ones((kernel_size, kernel_size), np.uint8)    mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1) # Fermeture seule    print(f"  - Masque créé et nettoyé (Fermeture seule kernel={kernel_size}).")    output_mask_path = os.path.join(AKOBEN_CLEAN_DIR, "output_zigzag_mask.png")    try:        cv2.imwrite(output_mask_path, mask_closed)        print(f"  - Masque ZigZag sauvegardé : {output_mask_path}")        return mask_closed    except Exception as e:        print(f"  - ERREUR lors de la sauvegarde du masque ZigZag : {e}")        return None# --- Point d'entrée (Modifié pour tester l'extraction ZigZag) ---if __name__ == "__main__":    print("--- Test d'analyse d'image (Extraction Masque ZigZag) ---")    test_image_relative_path = '2025-03-26/setup_20250326083927/original.png'    if test_image_relative_path == 'VOTRE_IMAGE_ICI.png':         print("\n!!! ATTENTION : Veuillez modifier la variable 'test_image_relative_path' !!!\n")    else:        # 1. Isoler le ROI du PRIX        price_image_roi, price_y_coords = analyze_price_zone_fixed_percent(            test_image_relative_path,            start_percent=0.06, # ~6%            end_percent=0.59   # ~59%        )        # 2. Si le ROI est valide, extraire le masque ZigZag        if price_image_roi is not None:            print(f"ROI PRIX (Fixe) extrait avec succès.")            zigzag_mask = extract_zigzag_by_color(price_image_roi)            if zigzag_mask is not None:                print("Extraction du masque ZigZag par couleur réussie. Vérifiez output_zigzag_mask.png.")                # Prochaine étape : trouver les coins/vertices dans zigzag_mask            else:                print("Échec de l'extraction du masque ZigZag par couleur.")        else:            print("Échec de l'extraction du ROI PRIX (Fixe).")    # --- Code pour RSI (temporairement désactivé pour se concentrer sur ZigZag) ---    # print("\n--- Test RSI (désactivé pour le moment) ---")    # rsi_image_roi, rsi_y_coords = analyze_rsi_zone_fixed_percent(...)    # if rsi_image_roi is not None:    #     rsi_mask = extract_rsi_curve_by_color(rsi_image_roi)    #     if rsi_mask is not None:    #         peaks, troughs = find_rsi_extrema(rsi_mask, ...)    #         # ... visualisation ...    # --- Fin Code RSI désactivé ---    print("--- Fin du test ---")
