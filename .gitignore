@@ -58,4 +58,5 @@ test_order.py
 test_zmq_connection.py
 traduction_vison_algo.txt
 var/
-venv/
+venv/src/agents/vision/akoben_config.py
+src/agents/vision/akoben_config.py
