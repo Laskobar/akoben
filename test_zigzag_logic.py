@@ -44,7 +44,7 @@ RSI_PERIOD = 14
 RESPONSE_TIMEOUT_SECONDS = 10
 RESPONSE_POLL_INTERVAL = 0.1
 # Demander assez de données pour SMA, RSI, et Zigzag
-data_count_request = 300 + max(SMA_PERIOD, RSI_PERIOD, ZIGZAG_LENGTH)
+data_count_request = 900 + max(SMA_PERIOD, RSI_PERIOD, ZIGZAG_LENGTH)
 print(f"\nDemande des {data_count_request} dernières bougies M1 pour {SYMBOL}")
 
 # --- Fonctions de Communication Fichiers ---
@@ -153,34 +153,41 @@ except Exception as e:
     traceback.print_exc()
     exit()
 
-# --- Calcul ZigZag et Zones ---
+# --- Calcul et Affichage ZigZag / Zones d'Intérêt ---
 print("\n--- Calcul ZigZag et Zones ---")
 try:
     print(f"Calcul pivots ZigZag (length={ZIGZAG_LENGTH})...")
     zigzag_pivots = calculate_zigzag_pivots(rates_df, length=ZIGZAG_LENGTH)
     print(f"Calcul ZigZag terminé. {len(zigzag_pivots)} pivots trouvés.")
 
-    print("\nAnalyse des pivots pour définir les Zones d'Intérêt:")
+    print("\nAnalyse des pivots pour définir les Zones d'Intérêt (Basé sur HH/LL uniquement):") # Message mis à jour
     if not zigzag_pivots:
         print("Aucun pivot ZigZag détecté.")
     else:
+        interest_zones = {} # Réinitialisé ici
         # Afficher les pivots et chercher les zones associées
         for i in range(len(zigzag_pivots)):
             pivot = zigzag_pivots[i]
             print(f"- Pivot {i}: {pivot['index']}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
 
+            # --- MODIFICATION ICI : Appeler find_interest_zone SEULEMENT pour HH ou LL ---
             if pivot['index'] in rates_df.index:
+                 # Condition modifiée: on ne cherche une zone QUE si le pivot est HH ou LL
                  if 'status' in pivot and (pivot['status'] == 'HH' or pivot['status'] == 'LL'):
+                     print(f"    (Pivot HH/LL détecté, recherche de zone d'intérêt...)") # Message debug
                      try:
                          zone_info = find_interest_zone(rates_df, zigzag_pivots, i)
                          if zone_info:
-                             print(f"    ZONE D'INTÉRÊT DÉFINIE ({zone_info['direction']}):")
-                             print(f"      Début: {zone_info['start_price']:.5f} (Bougie {zone_info['breakout_candle_index']})")
-                             print(f"      Fin  : {zone_info['end_price']:.5f} (Pivot {zone_info['preceding_pivot_index']})")
-                             # Stocker la dernière zone trouvée pour chaque direction
-                             interest_zones[zone_info['direction']] = zone_info
+                             print(f"    >>> ZONE D'INTÉRÊT DÉFINIE ({zone_info['direction']}):") # Mise en évidence
+                             print(f"          Début: {zone_info['start_price']:.5f} (Bougie {zone_info['breakout_candle_index']})")
+                             print(f"          Fin  : {zone_info['end_price']:.5f} (Pivot {zone_info['preceding_pivot_index']})")
+                             interest_zones[zone_info['direction']] = zone_info # Stocker la dernière zone
+                         # else: # Décommenter si on veut savoir pourquoi une zone n'a pas été trouvée
+                             # print(f"    (Aucune zone d'intérêt trouvée pour ce pivot HH/LL)")
                      except Exception as zie:
                           print(f"    ERREUR find_interest_zone pour pivot {i}: {zie}")
+                 # else: # Pas un HH ou LL, on ne cherche pas de zone
+                     # print(f"    (Pivot {pivot['status']} ignoré pour définition de zone)") # Message debug
             else:
                 print(f"    (Pivot {pivot['index']} hors DF post-indicateurs)")
 
