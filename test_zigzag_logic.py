@@ -1,284 +1,200 @@
-import pandas as pd
-import numpy as np
-import json
-import time
-import os
-from datetime import datetime, timedelta, timezone
-import uuid # Pour générer des ID de requêtes uniques
-
-# --- Importer la fonction ZigZag ---
-try:
-    from src.tools.signal_utils import calculate_zigzag_pivots
-    print("Fonction calculate_zigzag_pivots importée avec succès.")
-except ImportError:
-    print("ERREUR: Impossible d'importer calculate_zigzag_pivots.")
-    print("Vérifiez le chemin et l'emplacement du fichier signal_utils.py")
-    exit()
-
-# --- Configuration ---
-# Chemins des fichiers de communication (adaptés pour Wine/Linux)
-WINE_PREFIX = os.path.expanduser("~/.wine64") # << Adapté à .wine64
-MT5_FILES_PATH_UNDER_WINE = "drive_c/Program Files/MetaTrader 5/MQL5/Files"
-REQUEST_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "requests.txt")
-RESPONSE_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "responses.txt")
-
-print(f"Utilisation des chemins de fichiers:")
-print(f"  Requêtes : {REQUEST_FILE_PATH}")
-print(f"  Réponses : {RESPONSE_FILE_PATH}")
-
-# Vérifier l'existence du répertoire MQL5/Files
-files_dir = os.path.dirname(REQUEST_FILE_PATH)
-if not os.path.isdir(files_dir):
-    print(f"\nERREUR: Le répertoire des fichiers ({files_dir}) ne semble pas exister.")
-    exit()
-else:
-    print(f"Le répertoire des fichiers ({files_dir}) existe.")
-
-# Paramètres du test
-SYMBOL = "US30.cash"
-TIMEFRAME_STR = "M1"
-ZIGZAG_LENGTH = 9
-RESPONSE_TIMEOUT_SECONDS = 10
-RESPONSE_POLL_INTERVAL = 0.1
-
-# --- Définir le NOMBRE de bougies à demander ---
-# On demande un peu plus pour les calculs initiaux
-data_count_request = 300 # Demandons 300 bougies (ajustez si besoin)
-print(f"\nDemande des {data_count_request} dernières bougies M1 pour {SYMBOL}")
-
-
-# --- Fonctions de Communication Fichiers ---
-# (Les fonctions write_request, clear_request_file, read_response, send_command_and_wait
-#  restent les mêmes que dans la version précédente)
-def write_request(command: str, request_id: str) -> bool:
-    request_content = f"ID:{request_id}|{command}"
-    try:
-        with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
-            f.write(request_content)
-        print(f"  Requête écrite ({request_id}): {command}")
-        return True
-    except Exception as e:
-        print(f"ERREUR lors de l'écriture dans {REQUEST_FILE_PATH}: {e}")
-        return False
-
-def clear_request_file():
-     try:
-         with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
-             f.write("")
-     except Exception as e:
-         print(f"ERREUR lors de l'effacement de {REQUEST_FILE_PATH}: {e}")
-
-def read_response(expected_request_id: str) -> str | None:
-    try:
-        if not os.path.exists(RESPONSE_FILE_PATH):
-            return None
-        with open(RESPONSE_FILE_PATH, 'r', encoding='utf-8') as f:
-            response_content = f.read().strip()
-        if not response_content:
-            return None
-        if response_content.startswith(f"ID:{expected_request_id}|"):
-            response_data = response_content.split('|', 1)[1]
-            print(f"  Réponse reçue ({expected_request_id}): {response_data[:100]}...")
-            return response_data
-    except Exception as e:
-        print(f"ERREUR lors de la lecture de {RESPONSE_FILE_PATH}: {e}")
-    return None
-
-def send_command_and_wait(command: str) -> str | None:
-    request_id = str(uuid.uuid4())[:8]
-    try:
-        if os.path.exists(RESPONSE_FILE_PATH):
-            os.remove(RESPONSE_FILE_PATH)
-    except Exception as e:
-        print(f"Avertissement: Impossible d'effacer l'ancien fichier réponse: {e}")
-    if not write_request(command, request_id):
-        return None
-    start_wait_time = time.time()
-    while time.time() - start_wait_time < RESPONSE_TIMEOUT_SECONDS:
-        response = read_response(request_id)
-        if response is not None:
-            clear_request_file()
-            return response
-        time.sleep(RESPONSE_POLL_INTERVAL)
-    print(f"ERREUR: Timeout - Requête {request_id}")
-    clear_request_file()
-    return None
-# --- Fin Fonctions Communication ---
-
-
-# --- Récupération des données via l'EA ---
-print("\nEnvoi de la commande DATA à l'EA...")
-data_command = f"DATA {SYMBOL} {TIMEFRAME_STR} {data_count_request}"
-response_data_str = send_command_and_wait(data_command)
-
-if response_data_str is None or response_data_str.startswith("ERROR"):
-    print(f"ERREUR: L'EA n'a pas pu fournir les données. Réponse: {response_data_str}")
-    exit()
-
-# --- Parsing de la réponse JSON de l'EA ---
-print("Parsing de la réponse JSON...")
-try:
-    json_part = response_data_str.split('[', 1)[1].rsplit(']', 1)[0]
-    json_data_str = '[' + json_part + ']'
-    data_list = json.loads(json_data_str)
-    if not data_list:
-        print("ERREUR: La liste de données JSON est vide.")
-        exit()
-    print(f"{len(data_list)} barres reçues et parsées depuis l'EA.")
-
-    rates_df = pd.DataFrame(data_list)
-    rates_df['time'] = pd.to_datetime(rates_df['time'], unit='s', utc=True)
-    rates_df.set_index('time', inplace=True)
-    rates_df.rename(columns={'high': 'High', 'low': 'Low', 'close': 'Close', 'open': 'Open'}, inplace=True)
-    required_cols = ['Open', 'High', 'Low', 'Close']
-    if not all(col in rates_df.columns for col in required_cols):
-        print(f"ERREUR: Colonnes manquantes. Reçu: {rates_df.columns.tolist()}")
-        exit()
-    rates_df = rates_df[required_cols]
-
-    # !!!! LIGNE DE FILTRAGE SUPPRIMÉE !!!!
-    # rates_df = rates_df.loc[start_datetime_utc : end_datetime_utc]
-
-    # Afficher la période réelle des données reçues
-    if not rates_df.empty:
-        actual_start_time = rates_df.index.min()
-        actual_end_time = rates_df.index.max()
-        print(f"\nDonnées traitées pour la période UTC réelle: {actual_start_time} à {actual_end_time}")
-    else:
-        print("\nERREUR: DataFrame vide après parsing, impossible de continuer.")
-        exit()
-
-    print("Premières lignes du DataFrame (données réelles):")
-    print(rates_df.head())
-    print("Dernières lignes du DataFrame (données réelles):")
-    print(rates_df.tail())
-
-except Exception as e:
-    print(f"ERREUR lors du parsing JSON ou création DataFrame: {e}")
-    print("Réponse brute reçue (début):", response_data_str[:500])
-    import traceback
-    traceback.print_exc()
-    exit()
-
-# --- Importer les fonctions depuis signal_utils ---
-try:
-    from src.tools.signal_utils import calculate_zigzag_pivots, find_interest_zone # AJOUTER find_interest_zone
-    print("Fonctions calculate_zigzag_pivots et find_interest_zone importées.")
-except ImportError:
-    print("ERREUR: Impossible d'importer les fonctions depuis signal_utils.")
-    exit()
-
-# ... (Configuration, fonctions de communication...) ...
-
-# --- Récupération des données via l'EA ---
-# ... (code inchangé) ...
-
-# --- Parsing de la réponse JSON de l'EA ---
-print("Parsing de la réponse JSON...")
-try:
-    # ... (code inchangé jusqu'à la création de rates_df) ...
-
-    # --- AJOUT : Calcul de la SMA(20) ---
-    SMA_PERIOD = 20
-    # Important: Les données de l'EA sont inversées (plus récent en premier).
-    # Il faut les trier par date croissante avant de calculer la SMA.
-    rates_df.sort_index(ascending=True, inplace=True)
-    rates_df['SMA20'] = rates_df['Close'].rolling(window=SMA_PERIOD).mean()
-    print(f"SMA({SMA_PERIOD}) calculée.")
-
-    # Supprimer les premières lignes où la SMA n'est pas calculable (NaN)
-    rates_df.dropna(subset=['SMA20'], inplace=True)
-    print(f"{len(rates_df)} barres restantes après suppression des NaN de la SMA.")
-
-    # Afficher la période réelle des données traitées (après dropna)
-    if not rates_df.empty:
-        actual_start_time = rates_df.index.min()
-        actual_end_time = rates_df.index.max()
-        print(f"\nDonnées traitées pour la période UTC réelle: {actual_start_time} à {actual_end_time}")
-    else:
-        print("\nERREUR: DataFrame vide après calcul SMA, impossible de continuer.")
-        exit()
-
-    # ... (affichage head/tail inchangé) ...
-
-except Exception as e:
-    # ... (gestion des erreurs inchangée) ...
-
-
-# --- Exécution de la fonction ZigZag ---
-# ... (code inchangé) ...
-
-# --- Affichage des résultats ZigZag ET Recherche des Zones d'Intérêt ---
-print("\nPivots ZigZag détectés et Zones d'Intérêt potentielles:")
-if not zigzag_pivots:
-    print("Aucun pivot détecté.")
-else:
-    interest_zones = [] # Pour stocker les zones trouvées
-    for i in range(len(zigzag_pivots)):
-        pivot = zigzag_pivots[i]
-        pivot_time_utc = pivot['index']
-        print(f"- Pivot: {pivot_time_utc}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
-
-        # --- AJOUT: Appel de find_interest_zone ---
-        # On cherche une zone définie par la confirmation de ce pivot 'i'
-        # On s'assure que le pivot existe bien dans le dataframe après calcul SMA
-        if pivot['index'] in rates_df.index:
-             # On appelle la fonction uniquement si le nouveau pivot est un HH ou LL
-             # (car c'est le critère mentionné pour initier la recherche de zone)
-             if 'status' in pivot and (pivot['status'] == 'HH' or pivot['status'] == 'LL'):
-                 zone_info = find_interest_zone(rates_df, zigzag_pivots, i)
-                 if zone_info:
-                     print(f"    ZONE D'INTÉRÊT DÉFINIE ({zone_info['direction']}):")
-                     print(f"      Début : {zone_info['start_price']:.5f} (High/Low de la bougie {zone_info['breakout_candle_index']})")
-                     print(f"      Fin   : {zone_info['end_price']:.5f} (Prix du pivot précédent {zone_info['preceding_pivot_index']})")
-                     interest_zones.append(zone_info) # Stocker pour analyse future si besoin
-        else:
-            print(f"    (Pivot {pivot_time_utc} non trouvé dans le DF après calcul SMA, impossible de chercher la zone)")
-
-
-print("\n--- ACTION REQUISE ---")
-print(f"1. L'EA doit être actif.")
-print(f"2. Ouvrez TradingView ({SYMBOL} M1).")
-print(f"3. Comparez les Pivots ET les Zones d'Intérêt affichées ci-dessus avec votre analyse manuelle.")
-print(f"4. Vérifiez si la bougie de cassure et les limites (Début/Fin) de la zone correspondent à votre stratégie.")
-print(f"5. Faites-moi part des résultats.")
-print("----------------------")
-
-# --- Exécution de la fonction ZigZag ---
-print(f"\nCalcul des pivots ZigZag (length={ZIGZAG_LENGTH}) sur {len(rates_df)} barres...")
-try:
-    zigzag_pivots = calculate_zigzag_pivots(rates_df, length=ZIGZAG_LENGTH)
-    print("Calcul terminé.")
-except Exception as e:
-    print(f"ERREUR pendant l'exécution de calculate_zigzag_pivots: {e}")
-    import traceback
-    traceback.print_exc()
-    exit()
-
-# --- Affichage des résultats ---
-print("\nPivots ZigZag détectés par la fonction Python:")
-if not zigzag_pivots:
-    print("Aucun pivot détecté.")
-else:
-    # Afficher les 15-20 derniers pivots pour comparaison facile
-    start_index = max(0, len(zigzag_pivots) - 20)
-    print(f"(Affichage des {len(zigzag_pivots) - start_index} derniers pivots sur {len(zigzag_pivots)} détectés)")
-    for i in range(start_index, len(zigzag_pivots)):
-        pivot = zigzag_pivots[i]
-        pivot_time_utc = pivot['index']
-        print(f"- Time (UTC): {pivot_time_utc}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
-
-print("\n--- ACTION REQUISE ---")
-print(f"1. L'EA EA_AkobenConnector doit être actif sur un graphique MT5 (sous Wine).")
-print(f"2. Ouvrez TradingView pour {SYMBOL} en M1.")
-print(f"3. Affichez votre indicateur ZigZag (length={ZIGZAG_LENGTH}).")
-print(f"4. Comparez MANUELLEMENT les pivots affichés ci-dessus avec ceux visibles sur TradingView")
-print(f"   pour la période récente correspondant approximativement à :")
-if 'actual_start_time' in locals() and 'actual_end_time' in locals():
-      print(f"   {actual_start_time.strftime('%Y-%m-%d %H:%M:%S')} UTC à {actual_end_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-else:
-      print("   (Période non déterminée)")
-print(f"5. Concentrez-vous sur les 15-20 derniers pivots pour la comparaison.")
-print(f"6. Vérifiez la correspondance (Time UTC, Prix, Type, Statut HH/LL...).")
-print(f"7. Faites-moi part des résultats.")
+import pandas as pd
+import numpy as np
+import json
+import time
+import os
+from datetime import datetime, timedelta, timezone
+import uuid # Pour générer des ID de requêtes uniques
+
+# --- Importer les fonctions depuis signal_utils ---
+try:
+    # Assurez-vous que signal_utils.py est dans le bon dossier (src/tools/)
+    from src.tools.signal_utils import calculate_zigzag_pivots, find_interest_zone
+    print("Fonctions calculate_zigzag_pivots et find_interest_zone importées.")
+except ImportError:
+    print("ERREUR: Impossible d'importer les fonctions depuis src.tools.signal_utils.")
+    print("Vérifiez le chemin et l'emplacement du fichier signal_utils.py")
+    exit()
+
+# --- Configuration ---
+WINE_PREFIX = os.path.expanduser("~/.wine64")
+MT5_FILES_PATH_UNDER_WINE = "drive_c/Program Files/MetaTrader 5/MQL5/Files"
+REQUEST_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "requests.txt")
+RESPONSE_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "responses.txt")
+
+print(f"Utilisation des chemins de fichiers:")
+print(f"  Requêtes : {REQUEST_FILE_PATH}")
+print(f"  Réponses : {RESPONSE_FILE_PATH}")
+
+files_dir = os.path.dirname(REQUEST_FILE_PATH)
+if not os.path.isdir(files_dir):
+    print(f"\nERREUR: Le répertoire des fichiers ({files_dir}) ne semble pas exister.")
+    exit()
+else:
+    print(f"Le répertoire des fichiers ({files_dir}) existe.")
+
+SYMBOL = "US30.cash"
+TIMEFRAME_STR = "M1"
+ZIGZAG_LENGTH = 9
+SMA_PERIOD = 20
+RESPONSE_TIMEOUT_SECONDS = 10
+RESPONSE_POLL_INTERVAL = 0.1
+data_count_request = 300 + SMA_PERIOD # Demander assez pour calculer SMA + Zigzag
+print(f"\nDemande des {data_count_request} dernières bougies M1 pour {SYMBOL}")
+
+# --- Fonctions de Communication Fichiers ---
+def write_request(command: str, request_id: str) -> bool:
+    request_content = f"ID:{request_id}|{command}"
+    try:
+        with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
+            f.write(request_content)
+        print(f"  Requête écrite ({request_id}): {command}")
+        return True
+    except Exception as e:
+        print(f"ERREUR lors de l'écriture dans {REQUEST_FILE_PATH}: {e}")
+        return False
+
+def clear_request_file():
+     try:
+         with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
+             f.write("")
+     except Exception as e:
+         print(f"ERREUR lors de l'effacement de {REQUEST_FILE_PATH}: {e}")
+
+def read_response(expected_request_id: str) -> str | None:
+    try:
+        if not os.path.exists(RESPONSE_FILE_PATH): return None
+        with open(RESPONSE_FILE_PATH, 'r', encoding='utf-8') as f:
+            response_content = f.read().strip()
+        if not response_content: return None
+        if response_content.startswith(f"ID:{expected_request_id}|"):
+            response_data = response_content.split('|', 1)[1]
+            # print(f"  Réponse reçue ({expected_request_id}): {response_data[:100]}...") # Décommenter pour debug
+            return response_data
+    except Exception as e:
+        print(f"ERREUR lors de la lecture de {RESPONSE_FILE_PATH}: {e}")
+    return None
+
+def send_command_and_wait(command: str) -> str | None:
+    request_id = str(uuid.uuid4())[:8]
+    try:
+        if os.path.exists(RESPONSE_FILE_PATH): os.remove(RESPONSE_FILE_PATH)
+    except Exception as e:
+        print(f"Avertissement: Impossible d'effacer l'ancien fichier réponse: {e}")
+    if not write_request(command, request_id): return None
+    start_wait_time = time.time()
+    while time.time() - start_wait_time < RESPONSE_TIMEOUT_SECONDS:
+        response = read_response(request_id)
+        if response is not None:
+            clear_request_file()
+            return response
+        time.sleep(RESPONSE_POLL_INTERVAL)
+    print(f"ERREUR: Timeout - Requête {request_id}")
+    clear_request_file()
+    return None
+# --- Fin Fonctions Communication ---
+
+# --- Initialisation des variables pour les données ---
+rates_df = pd.DataFrame()
+actual_start_time = None
+actual_end_time = None
+
+# --- Récupération et Traitement des Données ---
+print("\n--- Récupération et Traitement des Données ---")
+try:
+    print("Envoi de la commande DATA à l'EA...")
+    data_command = f"DATA {SYMBOL} {TIMEFRAME_STR} {data_count_request}"
+    response_data_str = send_command_and_wait(data_command)
+
+    if response_data_str is None or response_data_str.startswith("ERROR"):
+        raise RuntimeError(f"L'EA n'a pas pu fournir les données. Réponse: {response_data_str}")
+
+    print("Parsing de la réponse JSON...")
+    json_part = response_data_str.split('[', 1)[1].rsplit(']', 1)[0]
+    json_data_str = '[' + json_part + ']'
+    data_list = json.loads(json_data_str)
+    if not data_list:
+        raise ValueError("La liste de données JSON est vide.")
+    print(f"{len(data_list)} barres reçues et parsées depuis l'EA.")
+
+    rates_df = pd.DataFrame(data_list)
+    rates_df['time'] = pd.to_datetime(rates_df['time'], unit='s', utc=True)
+    rates_df.set_index('time', inplace=True)
+    rates_df.rename(columns={'high': 'High', 'low': 'Low', 'close': 'Close', 'open': 'Open'}, inplace=True)
+    required_cols = ['Open', 'High', 'Low', 'Close']
+    if not all(col in rates_df.columns for col in required_cols):
+        raise ValueError(f"Colonnes manquantes. Reçu: {rates_df.columns.tolist()}")
+    rates_df = rates_df[required_cols]
+
+    print("Calcul de la SMA(20)...")
+    rates_df.sort_index(ascending=True, inplace=True) # Trier avant indicateurs
+    rates_df['SMA20'] = rates_df['Close'].rolling(window=SMA_PERIOD).mean()
+    rates_df.dropna(subset=['SMA20'], inplace=True) # Supprimer NaN SMA
+    print(f"{len(rates_df)} barres après calcul SMA.")
+
+    if rates_df.empty:
+        raise ValueError("DataFrame vide après calcul SMA.")
+
+    actual_start_time = rates_df.index.min()
+    actual_end_time = rates_df.index.max()
+    print(f"Données prêtes pour la période UTC: {actual_start_time} à {actual_end_time}")
+    # print("Aperçu des dernières données:") # Décommenter pour debug
+    # print(rates_df.tail())
+
+except Exception as e:
+    print(f"ERREUR lors de la récupération ou du traitement des données: {e}")
+    if 'response_data_str' in locals() and response_data_str:
+         print("Réponse brute reçue (début):", response_data_str[:500])
+    import traceback
+    traceback.print_exc()
+    exit() # Quitter si les données ne sont pas chargées/préparées correctement
+
+# --- Calcul et Affichage ZigZag / Zones d'Intérêt ---
+print("\n--- Calcul et Affichage ZigZag / Zones d'Intérêt ---")
+zigzag_pivots = [] # Initialiser en cas d'erreur plus bas
+try:
+    print(f"Calcul des pivots ZigZag (length={ZIGZAG_LENGTH}) sur {len(rates_df)} barres...")
+    zigzag_pivots = calculate_zigzag_pivots(rates_df, length=ZIGZAG_LENGTH)
+    print("Calcul ZigZag terminé.")
+
+    print("\nPivots ZigZag détectés et Zones d'Intérêt potentielles:")
+    if not zigzag_pivots:
+        print("Aucun pivot ZigZag détecté.")
+    else:
+        interest_zones = []
+        for i in range(len(zigzag_pivots)):
+            pivot = zigzag_pivots[i]
+            pivot_time_utc = pivot['index']
+            print(f"- Pivot: {pivot_time_utc}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
+
+            # Appel de find_interest_zone
+            if pivot['index'] in rates_df.index:
+                 # Appeler seulement si HH ou LL (selon la logique définie)
+                 if 'status' in pivot and (pivot['status'] == 'HH' or pivot['status'] == 'LL'):
+                     try:
+                         zone_info = find_interest_zone(rates_df, zigzag_pivots, i)
+                         if zone_info:
+                             print(f"    ZONE D'INTÉRÊT DÉFINIE ({zone_info['direction']}):")
+                             print(f"      Début : {zone_info['start_price']:.5f} (High/Low de bougie {zone_info['breakout_candle_index']})")
+                             print(f"      Fin   : {zone_info['end_price']:.5f} (Prix pivot précédent {zone_info['preceding_pivot_index']})")
+                             interest_zones.append(zone_info)
+                     except Exception as zie: # Erreur spécifique à find_interest_zone
+                          print(f"    ERREUR pendant find_interest_zone pour pivot {pivot_time_utc}: {zie}")
+            else:
+                print(f"    (Pivot {pivot_time_utc} non trouvé dans DF post-SMA)")
+
+except Exception as e:
+    print(f"ERREUR pendant le calcul ZigZag ou Zone Intérêt: {e}")
+    import traceback
+    traceback.print_exc()
+
+# --- Instructions Finales ---
+print("\n--- ACTION REQUISE ---")
+# ... (instructions inchangées) ...
+print(f"1. L'EA doit être actif.")
+print(f"2. Ouvrez TradingView ({SYMBOL} M1).")
+print(f"3. Comparez les Pivots ET les Zones d'Intérêt affichées ci-dessus avec votre analyse manuelle.")
+print(f"   Période UTC approx: {actual_start_time.strftime('%Y-%m-%d %H:%M:%S') if actual_start_time else 'N/A'} à {actual_end_time.strftime('%Y-%m-%d %H:%M:%S') if actual_end_time else 'N/A'}")
+print(f"4. Vérifiez si la bougie de cassure et les limites (Début/Fin) de la zone correspondent à votre stratégie.")
+print(f"5. Faites-moi part des résultats.")
 print("----------------------")
