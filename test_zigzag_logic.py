@@ -160,6 +160,90 @@ except Exception as e:
     traceback.print_exc()
     exit()
 
+# --- Importer les fonctions depuis signal_utils ---
+try:
+    from src.tools.signal_utils import calculate_zigzag_pivots, find_interest_zone # AJOUTER find_interest_zone
+    print("Fonctions calculate_zigzag_pivots et find_interest_zone importées.")
+except ImportError:
+    print("ERREUR: Impossible d'importer les fonctions depuis signal_utils.")
+    exit()
+
+# ... (Configuration, fonctions de communication...) ...
+
+# --- Récupération des données via l'EA ---
+# ... (code inchangé) ...
+
+# --- Parsing de la réponse JSON de l'EA ---
+print("Parsing de la réponse JSON...")
+try:
+    # ... (code inchangé jusqu'à la création de rates_df) ...
+
+    # --- AJOUT : Calcul de la SMA(20) ---
+    SMA_PERIOD = 20
+    # Important: Les données de l'EA sont inversées (plus récent en premier).
+    # Il faut les trier par date croissante avant de calculer la SMA.
+    rates_df.sort_index(ascending=True, inplace=True)
+    rates_df['SMA20'] = rates_df['Close'].rolling(window=SMA_PERIOD).mean()
+    print(f"SMA({SMA_PERIOD}) calculée.")
+
+    # Supprimer les premières lignes où la SMA n'est pas calculable (NaN)
+    rates_df.dropna(subset=['SMA20'], inplace=True)
+    print(f"{len(rates_df)} barres restantes après suppression des NaN de la SMA.")
+
+    # Afficher la période réelle des données traitées (après dropna)
+    if not rates_df.empty:
+        actual_start_time = rates_df.index.min()
+        actual_end_time = rates_df.index.max()
+        print(f"\nDonnées traitées pour la période UTC réelle: {actual_start_time} à {actual_end_time}")
+    else:
+        print("\nERREUR: DataFrame vide après calcul SMA, impossible de continuer.")
+        exit()
+
+    # ... (affichage head/tail inchangé) ...
+
+except Exception as e:
+    # ... (gestion des erreurs inchangée) ...
+
+
+# --- Exécution de la fonction ZigZag ---
+# ... (code inchangé) ...
+
+# --- Affichage des résultats ZigZag ET Recherche des Zones d'Intérêt ---
+print("\nPivots ZigZag détectés et Zones d'Intérêt potentielles:")
+if not zigzag_pivots:
+    print("Aucun pivot détecté.")
+else:
+    interest_zones = [] # Pour stocker les zones trouvées
+    for i in range(len(zigzag_pivots)):
+        pivot = zigzag_pivots[i]
+        pivot_time_utc = pivot['index']
+        print(f"- Pivot: {pivot_time_utc}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
+
+        # --- AJOUT: Appel de find_interest_zone ---
+        # On cherche une zone définie par la confirmation de ce pivot 'i'
+        # On s'assure que le pivot existe bien dans le dataframe après calcul SMA
+        if pivot['index'] in rates_df.index:
+             # On appelle la fonction uniquement si le nouveau pivot est un HH ou LL
+             # (car c'est le critère mentionné pour initier la recherche de zone)
+             if 'status' in pivot and (pivot['status'] == 'HH' or pivot['status'] == 'LL'):
+                 zone_info = find_interest_zone(rates_df, zigzag_pivots, i)
+                 if zone_info:
+                     print(f"    ZONE D'INTÉRÊT DÉFINIE ({zone_info['direction']}):")
+                     print(f"      Début : {zone_info['start_price']:.5f} (High/Low de la bougie {zone_info['breakout_candle_index']})")
+                     print(f"      Fin   : {zone_info['end_price']:.5f} (Prix du pivot précédent {zone_info['preceding_pivot_index']})")
+                     interest_zones.append(zone_info) # Stocker pour analyse future si besoin
+        else:
+            print(f"    (Pivot {pivot_time_utc} non trouvé dans le DF après calcul SMA, impossible de chercher la zone)")
+
+
+print("\n--- ACTION REQUISE ---")
+print(f"1. L'EA doit être actif.")
+print(f"2. Ouvrez TradingView ({SYMBOL} M1).")
+print(f"3. Comparez les Pivots ET les Zones d'Intérêt affichées ci-dessus avec votre analyse manuelle.")
+print(f"4. Vérifiez si la bougie de cassure et les limites (Début/Fin) de la zone correspondent à votre stratégie.")
+print(f"5. Faites-moi part des résultats.")
+print("----------------------")
+
 # --- Exécution de la fonction ZigZag ---
 print(f"\nCalcul des pivots ZigZag (length={ZIGZAG_LENGTH}) sur {len(rates_df)} barres...")
 try:

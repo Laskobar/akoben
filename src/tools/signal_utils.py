@@ -153,3 +153,129 @@ def calculate_zigzag_pivots(df_ohlc: pd.DataFrame, length: int = 9):
 #     print("Dernier pivot:", zigzag_pivots[-1])
 #     if len(zigzag_pivots) > 1:
 #         print("Avant-dernier pivot:", zigzag_pivots[-2])
+
+def find_interest_zone(df_ohlc_sma: pd.DataFrame,
+                         pivots: list,
+                         new_pivot_index_in_list: int) -> dict | None:
+    """
+    Identifie la zone d'intérêt basée sur une bougie de cassure de la SMA20
+    suite à la confirmation d'un nouveau pivot HH ou LL.
+
+    Args:
+        df_ohlc_sma: DataFrame pandas avec 'High', 'Low', 'Close', 'SMA20'.
+                     L'index doit être DatetimeIndex.
+        pivots: La liste complète des pivots ZigZag détectés (sortie de calculate_zigzag_pivots).
+        new_pivot_index_in_list: L'index (dans la liste `pivots`) du pivot HH/LL
+                                  nouvellement confirmé pour lequel on cherche la zone.
+
+    Returns:
+        Un dictionnaire décrivant la zone {'start_price': float, 'end_price': float,
+        'direction': 'bullish'/'bearish', 'breakout_candle_index': pd.Timestamp,
+        'preceding_pivot_index': pd.Timestamp} ou None si non applicable/trouvé.
+    """
+    if new_pivot_index_in_list < 1 or new_pivot_index_in_list >= len(pivots):
+        # Pas assez d'historique de pivots
+        return None
+
+    new_pivot = pivots[new_pivot_index_in_list]
+    prev_pivot = pivots[new_pivot_index_in_list - 1]
+
+    # S'assurer que les pivots sont de types opposés (ex: High après Low)
+    if new_pivot['type'] == prev_pivot['type']:
+        # Situation anormale ou début de données, on ignore
+        return None
+
+    # --- Logique pour un NOUVEAU PLUS HAUT (HH ou H après un L/LL/HL) ---
+    if new_pivot['type'] == 'high':
+        # On cherche une zone d'achat potentielle (pullback)
+        # Le pivot précédent doit être un 'low'
+        preceding_low_pivot = prev_pivot
+        if preceding_low_pivot['type'] != 'low': return None # Cohérence
+
+        # Définir la plage de recherche pour la bougie de cassure
+        # De la bougie *après* le pivot bas jusqu'à la bougie du pivot haut
+        search_start_index = df_ohlc_sma.index.get_loc(preceding_low_pivot['index']) + 1
+        search_end_index = df_ohlc_sma.index.get_loc(new_pivot['index'])
+        
+        # Assurer que les indices sont valides
+        if search_start_index > search_end_index or search_start_index < 0 or search_end_index >= len(df_ohlc_sma):
+             return None # Plage invalide
+
+        search_df = df_ohlc_sma.iloc[search_start_index : search_end_index + 1] # Inclure la bougie du pivot haut
+
+        breakout_candle_index = None
+        # Trouver la PREMIERE bougie dans la plage qui a CLOTURE AU-DESSUS de la SMA20
+        # On peut aussi vérifier qu'elle était en dessous avant (condition plus stricte)
+        for idx, row in search_df.iterrows():
+            # Condition simple : première clôture au-dessus
+            if row['Close'] > row['SMA20']:
+                 # Condition plus stricte (optionnelle): vérifier si la bougie précédente était en dessous
+                 # prev_idx_loc = df_ohlc_sma.index.get_loc(idx) - 1
+                 # if prev_idx_loc >= 0:
+                 #    prev_row = df_ohlc_sma.iloc[prev_idx_loc]
+                 #    if prev_row['Close'] <= prev_row['SMA20']:
+                 breakout_candle_index = idx
+                 break # On prend la première occurrence
+
+        if breakout_candle_index is None:
+            # Pas de bougie de cassure trouvée dans la plage
+            return None
+
+        # Définir la zone d'intérêt pour un ACHAT futur
+        zone_start_price = df_ohlc_sma.loc[breakout_candle_index, 'High']
+        zone_end_price = preceding_low_pivot['price'] # Low du pivot bas précédent
+
+        # La direction est 'bullish' car on s'attend à acheter dans cette zone
+        return {
+            'start_price': zone_start_price,
+            'end_price': zone_end_price,
+            'direction': 'bullish', # Setup pour acheter le pullback
+            'breakout_candle_index': breakout_candle_index,
+            'preceding_pivot_index': preceding_low_pivot['index']
+        }
+
+    # --- Logique pour un NOUVEAU PLUS BAS (LL ou L après un H/HH/LH) ---
+    elif new_pivot['type'] == 'low':
+        # On cherche une zone de vente potentielle (pullback)
+        # Le pivot précédent doit être un 'high'
+        preceding_high_pivot = prev_pivot
+        if preceding_high_pivot['type'] != 'high': return None # Cohérence
+
+        # Définir la plage de recherche
+        search_start_index = df_ohlc_sma.index.get_loc(preceding_high_pivot['index']) + 1
+        search_end_index = df_ohlc_sma.index.get_loc(new_pivot['index'])
+        
+        if search_start_index > search_end_index or search_start_index < 0 or search_end_index >= len(df_ohlc_sma):
+             return None
+
+        search_df = df_ohlc_sma.iloc[search_start_index : search_end_index + 1]
+
+        breakout_candle_index = None
+        # Trouver la PREMIERE bougie dans la plage qui a CLOTURE EN DESSOUS de la SMA20
+        for idx, row in search_df.iterrows():
+            if row['Close'] < row['SMA20']:
+                 # Condition plus stricte (optionnelle): vérifier si la bougie précédente était au-dessus
+                 # prev_idx_loc = df_ohlc_sma.index.get_loc(idx) - 1
+                 # if prev_idx_loc >= 0:
+                 #    prev_row = df_ohlc_sma.iloc[prev_idx_loc]
+                 #    if prev_row['Close'] >= prev_row['SMA20']:
+                 breakout_candle_index = idx
+                 break
+
+        if breakout_candle_index is None:
+            return None
+
+        # Définir la zone d'intérêt pour une VENTE future
+        zone_start_price = df_ohlc_sma.loc[breakout_candle_index, 'Low']
+        zone_end_price = preceding_high_pivot['price'] # High du pivot haut précédent
+
+        # La direction est 'bearish' car on s'attend à vendre dans cette zone
+        return {
+            'start_price': zone_start_price,
+            'end_price': zone_end_price,
+            'direction': 'bearish', # Setup pour vendre le pullback
+            'breakout_candle_index': breakout_candle_index,
+            'preceding_pivot_index': preceding_high_pivot['index']
+        }
+
+    return None # Si le type de pivot n'est ni 'high' ni 'low'
