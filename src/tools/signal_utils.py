@@ -1,5 +1,7 @@
+# ----- START OF FILE src/tools/signal_utils.py -----
 import pandas as pd
 import numpy as np
+import pandas_ta as ta # Assurez-vous que pandas-ta est installé (pip install pandas-ta)
 
 def calculate_zigzag_pivots(df_ohlc: pd.DataFrame, length: int = 9):
     """
@@ -7,8 +9,8 @@ def calculate_zigzag_pivots(df_ohlc: pd.DataFrame, length: int = 9):
     sur une période donnée, similaire au script PineScript fourni.
 
     Args:
-        df_ohlc: DataFrame pandas avec au moins les colonnes 'High', 'Low'.
-                 L'index doit être temporel ou numérique séquentiel.
+        df_ohlc: DataFrame pandas avec au moins les colonnes 'High', 'Low', 'Close'.
+                 L'index doit être DatetimeIndex, trié par ordre chronologique croissant.
         length: La période de recherche pour le ZigZag (équivalent zigzag_len).
 
     Returns:
@@ -20,139 +22,117 @@ def calculate_zigzag_pivots(df_ohlc: pd.DataFrame, length: int = 9):
     if len(df_ohlc) < length:
         return [] # Pas assez de données pour calculer
 
-    df = df_ohlc.copy()
+    # Assurer que le DataFrame est trié par date croissante
+    df = df_ohlc.sort_index(ascending=True).copy()
 
     # --- Étape 1: Calculer les conditions de retournement potentiel ---
-    # Note: .shift(1) est crucial pour comparer avec les N barres *précédentes*
+    # Note: .shift(1) pour comparer avec les N barres *précédentes*
     df['rolling_max'] = df['High'].rolling(length).max().shift(1)
     df['rolling_min'] = df['Low'].rolling(length).min().shift(1)
 
-    # La bougie actuelle est-elle un plus haut/bas potentiel sur la période ?
     df['potential_up_turn'] = df['Low'] <= df['rolling_min']
     df['potential_down_turn'] = df['High'] >= df['rolling_max']
 
     # --- Étape 2: Déterminer la tendance (state machine) ---
     trend = np.zeros(len(df), dtype=int)
-    # Initialisation : on peut supposer 1 ou essayer de deviner
-    # Ici, on initialise à 0 et on détermine sur la première fenêtre valide
     initial_trend_determined = False
-    for i in range(length, len(df)): # On commence après la première fenêtre complète
-         if not initial_trend_determined:
-             # Simple guess: if price rose more than fell in the first window
-             if df['Close'].iloc[i] > df['Close'].iloc[i-length]:
-                 trend[i-1] = 1 # Initial guess: Up
+    for i in range(length, len(df)):
+         if not initial_trend_determined and i > 0:
+             # Guess initial trend based on the first valid window
+             if df['Close'].iloc[i-1] > df['Close'].iloc[i-length if i-length >= 0 else 0]:
+                 trend[i-1] = 1 # Up
              else:
-                 trend[i-1] = -1 # Initial guess: Down
+                 trend[i-1] = -1 # Down
              initial_trend_determined = True
-             # Backfill trend pour les premiers points (nécessaire pour la suite)
-             trend[:i-1] = trend[i-1]
+             trend[:i-1] = trend[i-1] # Backfill
 
+         if i > 0: # Ensure we have a previous trend value
+            prev_trend = trend[i-1]
+            current_trend = prev_trend
 
-         prev_trend = trend[i-1]
-         current_trend = prev_trend
+            if prev_trend == 1 and df['potential_up_turn'].iloc[i]:
+                current_trend = -1
+            elif prev_trend == -1 and df['potential_down_turn'].iloc[i]:
+                current_trend = 1
 
-         if prev_trend == 1 and df['potential_up_turn'].iloc[i]:
-             current_trend = -1
-         elif prev_trend == -1 and df['potential_down_turn'].iloc[i]:
-             current_trend = 1
-         # else: garde le même trend
-
-         trend[i] = current_trend
+            trend[i] = current_trend
 
     df['trend'] = trend
-    # Détecter quand le trend change effectivement
-    # diff() = 0 (pas de changement), 2 (1 -> -1, high pivot), -2 (-1 -> 1, low pivot)
+    # diff() = current - previous. 1-(-1) = 2 (low pivot). -1-(1) = -2 (high pivot).
     df['trend_change'] = df['trend'].diff().fillna(0)
 
     # --- Étape 3: Identifier et stocker les pivots confirmés ---
     pivots = []
-    last_low_idx = df.index[0]
-    last_high_idx = df.index[0]
-    low_pivots_prices = [] # Stocke juste les prix pour comparaison HH/LL
+    last_confirmed_low_idx = df.index[0]
+    last_confirmed_high_idx = df.index[0]
+    low_pivots_prices = []
     high_pivots_prices = []
+    # Initialize first pivot based on initial trend? Or just let the loop find them?
+    # Let the loop find them to be safer.
 
-    for i in range(1, len(df)): # On itère pour trouver les changements
+    for i in range(1, len(df)):
         current_idx = df.index[i]
+        change = df['trend_change'].iloc[i]
 
-        # Trend est passé de -1 à 1 => Confirmation d'un PIVOT BAS
-        if df['trend_change'].iloc[i] == 2: # Correction: Si trend passe à 1, diff est 2 (-1 - (-1)) -> Non, c'est -2 (-1 -> 1)
-            # Correction :  diff() = current - previous.  -1 - (1) = -2.  1 - (-1) = 2.
-            pass # Erreur dans le commentaire, on continue avec la logique de diff()
-
-        # Trend est passé de 1 à -1 => Confirmation d'un PIVOT HAUT
-        if df['trend_change'].iloc[i] == -2: # 1 -> -1
-            # Le VRAI pivot HAUT est le MAX(High) entre le dernier pivot BAS et maintenant
-            lookback_start_idx = df.index.get_loc(last_low_idx)
-            # Fenêtre incluant la bougie *précédente* celle du changement de trend
-            lookback_window = df.iloc[lookback_start_idx : i] # Exclut la bougie i
+        # --- Confirmation d'un PIVOT HAUT (trend 1 -> -1) ---
+        if change == -2:
+            # Lookback from the last confirmed LOW pivot up to (but not including) the current bar
+            lookback_start_loc = df.index.get_loc(last_confirmed_low_idx)
+            lookback_window = df.iloc[lookback_start_loc : i] # up to i (exclusive)
             if lookback_window.empty: continue
 
             pivot_high_price = lookback_window['High'].max()
-            # Trouver l'index (timestamp) de ce max dans le DataFrame original
-            # Utilise idxmax() sur la fenêtre, puis récupère l'index original
             pivot_high_idx = lookback_window['High'].idxmax()
 
+            # Avoid adding duplicate pivots if trend flips back and forth quickly
+            if pivots and pivots[-1]['index'] == pivot_high_idx: continue
+            # Ensure the new pivot is strictly after the last one of the opposite type
+            if pivot_high_idx <= last_confirmed_low_idx: continue
 
-            # Déterminer le statut HH/LH
             status = 'H'
-            if high_pivots_prices: # Si on a déjà eu des pivots hauts
+            if high_pivots_prices:
                 prev_high_price = high_pivots_prices[-1]
-                if pivot_high_price > prev_high_price:
-                    status = 'HH'
-                elif pivot_high_price < prev_high_price:
-                    status = 'LH'
-                else:
-                    status = 'EH' # Equal High
+                if pivot_high_price > prev_high_price: status = 'HH'
+                elif pivot_high_price < prev_high_price: status = 'LH'
+                else: status = 'EH'
 
             pivot_info = {'index': pivot_high_idx, 'price': pivot_high_price, 'type': 'high', 'status': status}
             pivots.append(pivot_info)
             high_pivots_prices.append(pivot_high_price)
-            last_high_idx = pivot_high_idx # Mémorise ce pivot haut pour la prochaine recherche de bas
+            last_confirmed_high_idx = pivot_high_idx
 
-
-        # Trend est passé de -1 à 1 => Confirmation d'un PIVOT BAS
-        elif df['trend_change'].iloc[i] == 2: # -1 -> 1
-             # Le VRAI pivot BAS est le MIN(Low) entre le dernier pivot HAUT et maintenant
-            lookback_start_idx = df.index.get_loc(last_high_idx)
-            lookback_window = df.iloc[lookback_start_idx : i] # Exclut la bougie i
+        # --- Confirmation d'un PIVOT BAS (trend -1 -> 1) ---
+        elif change == 2:
+            # Lookback from the last confirmed HIGH pivot up to (but not including) the current bar
+            lookback_start_loc = df.index.get_loc(last_confirmed_high_idx)
+            lookback_window = df.iloc[lookback_start_loc : i] # up to i (exclusive)
             if lookback_window.empty: continue
 
             pivot_low_price = lookback_window['Low'].min()
             pivot_low_idx = lookback_window['Low'].idxmin()
 
-            # Déterminer le statut LL/HL
+            # Avoid adding duplicate pivots
+            if pivots and pivots[-1]['index'] == pivot_low_idx: continue
+             # Ensure the new pivot is strictly after the last one of the opposite type
+            if pivot_low_idx <= last_confirmed_high_idx: continue
+
             status = 'L'
             if low_pivots_prices:
                 prev_low_price = low_pivots_prices[-1]
-                if pivot_low_price < prev_low_price:
-                    status = 'LL'
-                elif pivot_low_price > prev_low_price:
-                    status = 'HL'
-                else:
-                    status = 'EL' # Equal Low
+                if pivot_low_price < prev_low_price: status = 'LL'
+                elif pivot_low_price > prev_low_price: status = 'HL'
+                else: status = 'EL'
 
             pivot_info = {'index': pivot_low_idx, 'price': pivot_low_price, 'type': 'low', 'status': status}
             pivots.append(pivot_info)
             low_pivots_prices.append(pivot_low_price)
-            last_low_idx = pivot_low_idx # Mémorise ce pivot bas pour la prochaine recherche de haut
+            last_confirmed_low_idx = pivot_low_idx
 
-    # Tri final par index (normalement déjà trié, mais par sécurité)
+    # Final sort just in case (should be sorted already)
     pivots.sort(key=lambda x: df.index.get_loc(x['index']))
 
     return pivots
 
-# --- Exemple d'utilisation (à adapter avec vos données MT5) ---
-# Supposons que 'mt5_data' est un DataFrame avec 'High', 'Low', 'Close'
-# provenant de MT5, avec un index DatetimeIndex.
-
-# zigzag_pivots = calculate_zigzag_pivots(mt5_data, length=9)
-# print(zigzag_pivots)
-
-# Afficher les derniers pivots pour vérification:
-# if zigzag_pivots:
-#     print("Dernier pivot:", zigzag_pivots[-1])
-#     if len(zigzag_pivots) > 1:
-#         print("Avant-dernier pivot:", zigzag_pivots[-2])
 
 def find_interest_zone(df_ohlc_sma: pd.DataFrame,
                          pivots: list,
@@ -163,119 +143,165 @@ def find_interest_zone(df_ohlc_sma: pd.DataFrame,
 
     Args:
         df_ohlc_sma: DataFrame pandas avec 'High', 'Low', 'Close', 'SMA20'.
-                     L'index doit être DatetimeIndex.
-        pivots: La liste complète des pivots ZigZag détectés (sortie de calculate_zigzag_pivots).
-        new_pivot_index_in_list: L'index (dans la liste `pivots`) du pivot HH/LL
-                                  nouvellement confirmé pour lequel on cherche la zone.
+                     L'index doit être DatetimeIndex, trié chronologiquement.
+        pivots: La liste complète des pivots ZigZag détectés.
+        new_pivot_index_in_list: L'index du pivot HH/LL *nouvellement confirmé* dans la liste `pivots`.
 
     Returns:
-        Un dictionnaire décrivant la zone {'start_price': float, 'end_price': float,
-        'direction': 'bullish'/'bearish', 'breakout_candle_index': pd.Timestamp,
-        'preceding_pivot_index': pd.Timestamp} ou None si non applicable/trouvé.
+        Un dictionnaire décrivant la zone {...} ou None.
     """
     if new_pivot_index_in_list < 1 or new_pivot_index_in_list >= len(pivots):
-        # Pas assez d'historique de pivots
         return None
 
     new_pivot = pivots[new_pivot_index_in_list]
     prev_pivot = pivots[new_pivot_index_in_list - 1]
 
-    # S'assurer que les pivots sont de types opposés (ex: High après Low)
-    if new_pivot['type'] == prev_pivot['type']:
-        # Situation anormale ou début de données, on ignore
-        return None
+    if new_pivot['type'] == prev_pivot['type']: return None # Pivots doivent être opposés
 
-    # --- Logique pour un NOUVEAU PLUS HAUT (HH ou H après un L/LL/HL) ---
+    # --- Cas: Nouveau Pivot HAUT (HH/LH/H) -> Cherche zone Achat ---
     if new_pivot['type'] == 'high':
-        # On cherche une zone d'achat potentielle (pullback)
-        # Le pivot précédent doit être un 'low'
         preceding_low_pivot = prev_pivot
-        if preceding_low_pivot['type'] != 'low': return None # Cohérence
+        if preceding_low_pivot['type'] != 'low': return None
 
-        # Définir la plage de recherche pour la bougie de cassure
-        # De la bougie *après* le pivot bas jusqu'à la bougie du pivot haut
-        search_start_index = df_ohlc_sma.index.get_loc(preceding_low_pivot['index']) + 1
-        search_end_index = df_ohlc_sma.index.get_loc(new_pivot['index'])
-        
-        # Assurer que les indices sont valides
-        if search_start_index > search_end_index or search_start_index < 0 or search_end_index >= len(df_ohlc_sma):
-             return None # Plage invalide
+        # Plage de recherche: après le pivot bas précédent jusqu'au nouveau pivot haut
+        try:
+            search_start_loc = df_ohlc_sma.index.get_loc(preceding_low_pivot['index']) + 1
+            search_end_loc = df_ohlc_sma.index.get_loc(new_pivot['index'])
+            if search_start_loc > search_end_loc: return None
+        except KeyError:
+             # print(f"Warning: Pivot index not found in DataFrame for zone search.") # Debug
+             return None # Pivot index non trouvé dans le DF actuel (peut arriver avec dropna)
 
-        search_df = df_ohlc_sma.iloc[search_start_index : search_end_index + 1] # Inclure la bougie du pivot haut
+
+        search_df = df_ohlc_sma.iloc[search_start_loc : search_end_loc + 1]
+        if search_df.empty: return None
 
         breakout_candle_index = None
-        # Trouver la PREMIERE bougie dans la plage qui a CLOTURE AU-DESSUS de la SMA20
-        # On peut aussi vérifier qu'elle était en dessous avant (condition plus stricte)
+        # Cherche PREMIERE clôture AU-DESSUS SMA20 dans la plage
         for idx, row in search_df.iterrows():
-            # Condition simple : première clôture au-dessus
             if row['Close'] > row['SMA20']:
-                 # Condition plus stricte (optionnelle): vérifier si la bougie précédente était en dessous
-                 # prev_idx_loc = df_ohlc_sma.index.get_loc(idx) - 1
-                 # if prev_idx_loc >= 0:
-                 #    prev_row = df_ohlc_sma.iloc[prev_idx_loc]
-                 #    if prev_row['Close'] <= prev_row['SMA20']:
-                 breakout_candle_index = idx
-                 break # On prend la première occurrence
+                breakout_candle_index = idx
+                break
 
-        if breakout_candle_index is None:
-            # Pas de bougie de cassure trouvée dans la plage
-            return None
+        if breakout_candle_index is None: return None
 
-        # Définir la zone d'intérêt pour un ACHAT futur
+        # Zone Achat: Début=High bougie cassure, Fin=Low pivot bas précédent
         zone_start_price = df_ohlc_sma.loc[breakout_candle_index, 'High']
-        zone_end_price = preceding_low_pivot['price'] # Low du pivot bas précédent
+        zone_end_price = preceding_low_pivot['price']
 
-        # La direction est 'bullish' car on s'attend à acheter dans cette zone
         return {
-            'start_price': zone_start_price,
-            'end_price': zone_end_price,
-            'direction': 'bullish', # Setup pour acheter le pullback
+            'start_price': zone_start_price, 'end_price': zone_end_price,
+            'direction': 'bullish',
             'breakout_candle_index': breakout_candle_index,
             'preceding_pivot_index': preceding_low_pivot['index']
         }
 
-    # --- Logique pour un NOUVEAU PLUS BAS (LL ou L après un H/HH/LH) ---
+    # --- Cas: Nouveau Pivot BAS (LL/HL/L) -> Cherche zone Vente ---
     elif new_pivot['type'] == 'low':
-        # On cherche une zone de vente potentielle (pullback)
-        # Le pivot précédent doit être un 'high'
         preceding_high_pivot = prev_pivot
-        if preceding_high_pivot['type'] != 'high': return None # Cohérence
+        if preceding_high_pivot['type'] != 'high': return None
 
-        # Définir la plage de recherche
-        search_start_index = df_ohlc_sma.index.get_loc(preceding_high_pivot['index']) + 1
-        search_end_index = df_ohlc_sma.index.get_loc(new_pivot['index'])
-        
-        if search_start_index > search_end_index or search_start_index < 0 or search_end_index >= len(df_ohlc_sma):
-             return None
-
-        search_df = df_ohlc_sma.iloc[search_start_index : search_end_index + 1]
-
-        breakout_candle_index = None
-        # Trouver la PREMIERE bougie dans la plage qui a CLOTURE EN DESSOUS de la SMA20
-        for idx, row in search_df.iterrows():
-            if row['Close'] < row['SMA20']:
-                 # Condition plus stricte (optionnelle): vérifier si la bougie précédente était au-dessus
-                 # prev_idx_loc = df_ohlc_sma.index.get_loc(idx) - 1
-                 # if prev_idx_loc >= 0:
-                 #    prev_row = df_ohlc_sma.iloc[prev_idx_loc]
-                 #    if prev_row['Close'] >= prev_row['SMA20']:
-                 breakout_candle_index = idx
-                 break
-
-        if breakout_candle_index is None:
+        # Plage de recherche: après le pivot haut précédent jusqu'au nouveau pivot bas
+        try:
+            search_start_loc = df_ohlc_sma.index.get_loc(preceding_high_pivot['index']) + 1
+            search_end_loc = df_ohlc_sma.index.get_loc(new_pivot['index'])
+            if search_start_loc > search_end_loc: return None
+        except KeyError:
+            # print(f"Warning: Pivot index not found in DataFrame for zone search.") # Debug
             return None
 
-        # Définir la zone d'intérêt pour une VENTE future
-        zone_start_price = df_ohlc_sma.loc[breakout_candle_index, 'Low']
-        zone_end_price = preceding_high_pivot['price'] # High du pivot haut précédent
+        search_df = df_ohlc_sma.iloc[search_start_loc : search_end_loc + 1]
+        if search_df.empty: return None
 
-        # La direction est 'bearish' car on s'attend à vendre dans cette zone
+        breakout_candle_index = None
+        # Cherche PREMIERE clôture EN DESSOUS SMA20 dans la plage
+        for idx, row in search_df.iterrows():
+            if row['Close'] < row['SMA20']:
+                breakout_candle_index = idx
+                break
+
+        if breakout_candle_index is None: return None
+
+        # Zone Vente: Début=Low bougie cassure, Fin=High pivot haut précédent
+        zone_start_price = df_ohlc_sma.loc[breakout_candle_index, 'Low']
+        zone_end_price = preceding_high_pivot['price']
+
         return {
-            'start_price': zone_start_price,
-            'end_price': zone_end_price,
-            'direction': 'bearish', # Setup pour vendre le pullback
+            'start_price': zone_start_price, 'end_price': zone_end_price,
+            'direction': 'bearish',
             'breakout_candle_index': breakout_candle_index,
             'preceding_pivot_index': preceding_high_pivot['index']
         }
 
-    return None # Si le type de pivot n'est ni 'high' ni 'low'
+    return None
+
+
+def check_divergence_in_zone(current_low: float,
+                              current_high: float,
+                              current_rsi: float,
+                              zone_info: dict,
+                              last_relevant_pivot: dict,
+                              rsi_at_last_pivot: float) -> str | None:
+    """
+    Vérifie si le prix actuel est dans la zone d'intérêt et s'il y a une
+    divergence RSI pertinente par rapport au dernier pivot ZigZag.
+
+    Args:
+        current_low: Le prix bas de la bougie actuelle.
+        current_high: Le prix haut de la bougie actuelle.
+        current_rsi: La valeur RSI de la bougie actuelle.
+        zone_info: Dictionnaire retourné par find_interest_zone.
+        last_relevant_pivot: Le pivot ZigZag (bas ou haut) qui définit la fin de la zone.
+        rsi_at_last_pivot: La valeur RSI au moment du last_relevant_pivot.
+
+    Returns:
+        Le type de divergence détectée ("BULL_REGULAR", "BULL_CONTINUATION",
+        "BEAR_REGULAR", "BEAR_CONTINUATION") si les conditions sont remplies,
+        sinon None.
+    """
+    if zone_info is None or last_relevant_pivot is None or pd.isna(current_rsi) or pd.isna(rsi_at_last_pivot):
+        return None
+
+    zone_start = zone_info['start_price']
+    zone_end = zone_info['end_price']
+    direction = zone_info['direction']
+    pivot_price = last_relevant_pivot['price']
+
+    # Définir zone_upper/lower pour comparaison
+    zone_upper = max(zone_start, zone_end)
+    zone_lower = min(zone_start, zone_end)
+    zone_size = zone_upper - zone_lower
+    tolerance = zone_size * 0.05 if zone_size > 0 else 0.00001 # Petite tolérance pour comparaison prix
+
+    # --- Setup ACHAT (zone bullish) ---
+    if direction == 'bullish':
+        if last_relevant_pivot['type'] != 'low': return None # Doit comparer avec un pivot bas
+        # Prix (Low) doit être dans la zone
+        if not (zone_lower <= current_low <= zone_upper): return None
+
+        # Div Bull Régulière: LL < L mais RSI(LL) > RSI(L)
+        if current_low < pivot_price - tolerance and current_rsi > rsi_at_last_pivot:
+             # print(f"Debug: Div Bull Regular détectée (Prix: {current_low:.5f} < {pivot_price:.5f}, RSI: {current_rsi:.2f} > {rsi_at_last_pivot:.2f})")
+             return "BULL_REGULAR"
+        # Div Bull Continuation: HL > L mais RSI(HL) < RSI(L)
+        if current_low > pivot_price + tolerance and current_rsi < rsi_at_last_pivot:
+             # print(f"Debug: Div Bull Cont détectée (Prix: {current_low:.5f} > {pivot_price:.5f}, RSI: {current_rsi:.2f} < {rsi_at_last_pivot:.2f})")
+             return "BULL_CONTINUATION"
+
+    # --- Setup VENTE (zone bearish) ---
+    elif direction == 'bearish':
+        if last_relevant_pivot['type'] != 'high': return None # Doit comparer avec un pivot haut
+        # Prix (High) doit être dans la zone
+        if not (zone_lower <= current_high <= zone_upper): return None
+
+        # Div Bear Régulière: HH > H mais RSI(HH) < RSI(H)
+        if current_high > pivot_price + tolerance and current_rsi < rsi_at_last_pivot:
+            # print(f"Debug: Div Bear Regular détectée (Prix: {current_high:.5f} > {pivot_price:.5f}, RSI: {current_rsi:.2f} < {rsi_at_last_pivot:.2f})")
+            return "BEAR_REGULAR"
+        # Div Bear Continuation: LH < H mais RSI(LH) > RSI(H)
+        if current_high < pivot_price - tolerance and current_rsi > rsi_at_last_pivot:
+            # print(f"Debug: Div Bear Cont détectée (Prix: {current_high:.5f} < {pivot_price:.5f}, RSI: {current_rsi:.2f} > {rsi_at_last_pivot:.2f})")
+            return "BEAR_CONTINUATION"
+
+    return None
+# ----- END OF FILE src/tools/signal_utils.py -----
