@@ -1,11 +1,12 @@
-import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import pytz # Nécessaire pour gérer les fuseaux horaires
+import json
+import time
+import os
+from datetime import datetime, timedelta, timezone
+import uuid # Pour générer des ID de requêtes uniques
 
-# --- Importer la fonction ZigZag depuis son emplacement ---
-# Ajustez le chemin si nécessaire selon votre structure
+# --- Importer la fonction ZigZag ---
 try:
     from src.tools.signal_utils import calculate_zigzag_pivots
     print("Fonction calculate_zigzag_pivots importée avec succès.")
@@ -14,76 +15,153 @@ except ImportError:
     print("Vérifiez le chemin et l'emplacement du fichier signal_utils.py")
     exit()
 
-# --- Configuration du Test ---
-MT5_LOGIN = 1510385169         # <<< REMPLACEZ par votre login MT5
-MT5_PASSWORD = "?9E15!PHbAe" # <<< REMPLACEZ par votre mot de passe MT5
-MT5_SERVER = "FTMO-Demo" # <<< REMPLACEZ par le nom de votre serveur MT5
-MT5_PATH = "C:/Program Files/MetaTrader 5/terminal64.exe" # <<< REMPLACEZ si MT5 n'est pas à l'emplacement par défaut
+# --- Configuration ---
+# Chemins des fichiers de communication (adaptés pour Wine/Linux)
+WINE_PREFIX = os.path.expanduser("~/.wine64") # << Adapté à .wine64
+MT5_FILES_PATH_UNDER_WINE = "drive_c/Program Files/MetaTrader 5/MQL5/Files"
+REQUEST_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "requests.txt")
+RESPONSE_FILE_PATH = os.path.join(WINE_PREFIX, MT5_FILES_PATH_UNDER_WINE, "responses.txt")
 
-SYMBOL = "US30.cash"        # Instrument à tester
-TIMEFRAME = mt5.TIMEFRAME_M1 # Timeframe M1
-ZIGZAG_LENGTH = 9      # Longueur du ZigZag à tester
+print(f"Utilisation des chemins de fichiers:")
+print(f"  Requêtes : {REQUEST_FILE_PATH}")
+print(f"  Réponses : {RESPONSE_FILE_PATH}")
 
-# --- Définir la période de test ---
-# !!! IMPORTANT: Choisissez une période où vous voyez clairement
-# plusieurs pivots ZigZag sur TradingView pour comparer !!!
-# Utilisez le fuseau horaire UTC pour la requête MT5
-timezone = pytz.utc
-# Exemple: Tester sur une journée spécifique (ajustez les dates/heures)
-# Attention aux heures d'ouverture/fermeture du marché US30
-start_time_utc = datetime(2025, 3, 28, 5, 0, 0, tzinfo=timezone) # UTC ~ Heure de début pour l'image fournie?
-end_time_utc = datetime(2025, 3, 28, 10, 0, 0, tzinfo=timezone) # UTC ~ Heure de fin pour l'image fournie?
-
-print(f"Configuration du test:")
-print(f"Symbol: {SYMBOL}, Timeframe: M1, ZigZag Length: {ZIGZAG_LENGTH}")
-print(f"Période UTC: de {start_time_utc} à {end_time_utc}")
-
-# --- Connexion à MetaTrader 5 ---
-print("\nInitialisation de MetaTrader 5...")
-if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER, path=MT5_PATH):
-    print(f"initialize() a échoué, code d'erreur = {mt5.last_error()}")
-    mt5.shutdown()
+# Vérifier l'existence du répertoire MQL5/Files
+files_dir = os.path.dirname(REQUEST_FILE_PATH)
+if not os.path.isdir(files_dir):
+    print(f"\nERREUR: Le répertoire des fichiers ({files_dir}) ne semble pas exister.")
     exit()
-print("Connecté à MetaTrader 5 avec succès.")
+else:
+    print(f"Le répertoire des fichiers ({files_dir}) existe.")
 
-# --- Récupération des données historiques ---
-print(f"Récupération des données pour {SYMBOL}...")
-rates = mt5.copy_rates_range(SYMBOL, TIMEFRAME, start_time_utc, end_time_utc)
+# Paramètres du test
+SYMBOL = "US30.cash"
+TIMEFRAME_STR = "M1"
+ZIGZAG_LENGTH = 9
+RESPONSE_TIMEOUT_SECONDS = 10
+RESPONSE_POLL_INTERVAL = 0.1
 
-# --- Arrêt de MT5 (important) ---
-mt5.shutdown()
-print("Connexion à MetaTrader 5 terminée.")
+# --- Définir le NOMBRE de bougies à demander ---
+# On demande un peu plus pour les calculs initiaux
+data_count_request = 300 # Demandons 300 bougies (ajustez si besoin)
+print(f"\nDemande des {data_count_request} dernières bougies M1 pour {SYMBOL}")
 
-if rates is None:
-    print("Aucune donnée récupérée pour la période spécifiée.")
+
+# --- Fonctions de Communication Fichiers ---
+# (Les fonctions write_request, clear_request_file, read_response, send_command_and_wait
+#  restent les mêmes que dans la version précédente)
+def write_request(command: str, request_id: str) -> bool:
+    request_content = f"ID:{request_id}|{command}"
+    try:
+        with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
+            f.write(request_content)
+        print(f"  Requête écrite ({request_id}): {command}")
+        return True
+    except Exception as e:
+        print(f"ERREUR lors de l'écriture dans {REQUEST_FILE_PATH}: {e}")
+        return False
+
+def clear_request_file():
+     try:
+         with open(REQUEST_FILE_PATH, 'w', encoding='utf-8') as f:
+             f.write("")
+     except Exception as e:
+         print(f"ERREUR lors de l'effacement de {REQUEST_FILE_PATH}: {e}")
+
+def read_response(expected_request_id: str) -> str | None:
+    try:
+        if not os.path.exists(RESPONSE_FILE_PATH):
+            return None
+        with open(RESPONSE_FILE_PATH, 'r', encoding='utf-8') as f:
+            response_content = f.read().strip()
+        if not response_content:
+            return None
+        if response_content.startswith(f"ID:{expected_request_id}|"):
+            response_data = response_content.split('|', 1)[1]
+            print(f"  Réponse reçue ({expected_request_id}): {response_data[:100]}...")
+            return response_data
+    except Exception as e:
+        print(f"ERREUR lors de la lecture de {RESPONSE_FILE_PATH}: {e}")
+    return None
+
+def send_command_and_wait(command: str) -> str | None:
+    request_id = str(uuid.uuid4())[:8]
+    try:
+        if os.path.exists(RESPONSE_FILE_PATH):
+            os.remove(RESPONSE_FILE_PATH)
+    except Exception as e:
+        print(f"Avertissement: Impossible d'effacer l'ancien fichier réponse: {e}")
+    if not write_request(command, request_id):
+        return None
+    start_wait_time = time.time()
+    while time.time() - start_wait_time < RESPONSE_TIMEOUT_SECONDS:
+        response = read_response(request_id)
+        if response is not None:
+            clear_request_file()
+            return response
+        time.sleep(RESPONSE_POLL_INTERVAL)
+    print(f"ERREUR: Timeout - Requête {request_id}")
+    clear_request_file()
+    return None
+# --- Fin Fonctions Communication ---
+
+
+# --- Récupération des données via l'EA ---
+print("\nEnvoi de la commande DATA à l'EA...")
+data_command = f"DATA {SYMBOL} {TIMEFRAME_STR} {data_count_request}"
+response_data_str = send_command_and_wait(data_command)
+
+if response_data_str is None or response_data_str.startswith("ERROR"):
+    print(f"ERREUR: L'EA n'a pas pu fournir les données. Réponse: {response_data_str}")
     exit()
-if len(rates) == 0:
-    print("Aucune donnée récupérée (longueur 0). Vérifiez la période et le symbole.")
+
+# --- Parsing de la réponse JSON de l'EA ---
+print("Parsing de la réponse JSON...")
+try:
+    json_part = response_data_str.split('[', 1)[1].rsplit(']', 1)[0]
+    json_data_str = '[' + json_part + ']'
+    data_list = json.loads(json_data_str)
+    if not data_list:
+        print("ERREUR: La liste de données JSON est vide.")
+        exit()
+    print(f"{len(data_list)} barres reçues et parsées depuis l'EA.")
+
+    rates_df = pd.DataFrame(data_list)
+    rates_df['time'] = pd.to_datetime(rates_df['time'], unit='s', utc=True)
+    rates_df.set_index('time', inplace=True)
+    rates_df.rename(columns={'high': 'High', 'low': 'Low', 'close': 'Close', 'open': 'Open'}, inplace=True)
+    required_cols = ['Open', 'High', 'Low', 'Close']
+    if not all(col in rates_df.columns for col in required_cols):
+        print(f"ERREUR: Colonnes manquantes. Reçu: {rates_df.columns.tolist()}")
+        exit()
+    rates_df = rates_df[required_cols]
+
+    # !!!! LIGNE DE FILTRAGE SUPPRIMÉE !!!!
+    # rates_df = rates_df.loc[start_datetime_utc : end_datetime_utc]
+
+    # Afficher la période réelle des données reçues
+    if not rates_df.empty:
+        actual_start_time = rates_df.index.min()
+        actual_end_time = rates_df.index.max()
+        print(f"\nDonnées traitées pour la période UTC réelle: {actual_start_time} à {actual_end_time}")
+    else:
+        print("\nERREUR: DataFrame vide après parsing, impossible de continuer.")
+        exit()
+
+    print("Premières lignes du DataFrame (données réelles):")
+    print(rates_df.head())
+    print("Dernières lignes du DataFrame (données réelles):")
+    print(rates_df.tail())
+
+except Exception as e:
+    print(f"ERREUR lors du parsing JSON ou création DataFrame: {e}")
+    print("Réponse brute reçue (début):", response_data_str[:500])
+    import traceback
+    traceback.print_exc()
     exit()
-
-print(f"{len(rates)} barres M1 récupérées.")
-
-# --- Conversion en DataFrame Pandas ---
-rates_df = pd.DataFrame(rates)
-# Convertir le temps en DatetimeIndex (MT5 donne des timestamps Unix)
-rates_df['time'] = pd.to_datetime(rates_df['time'], unit='s', utc=True)
-rates_df.set_index('time', inplace=True)
-
-# Renommer les colonnes pour correspondre à ce que la fonction attend (si nécessaire)
-# MT5 utilise 'open', 'high', 'low', 'close'. Notre fonction utilise 'High', 'Low'.
-# Assurons la bonne casse :
-rates_df.rename(columns={'high': 'High', 'low': 'Low', 'close': 'Close', 'open': 'Open'}, inplace=True)
-
-print("DataFrame créé avec les colonnes:", rates_df.columns.tolist())
-print("Index du DataFrame:", rates_df.index.name, "Type:", type(rates_df.index))
-print("Premières lignes du DataFrame:")
-print(rates_df.head())
-print("Dernières lignes du DataFrame:")
-print(rates_df.tail())
-
 
 # --- Exécution de la fonction ZigZag ---
-print(f"\nCalcul des pivots ZigZag (length={ZIGZAG_LENGTH})...")
+print(f"\nCalcul des pivots ZigZag (length={ZIGZAG_LENGTH}) sur {len(rates_df)} barres...")
 try:
     zigzag_pivots = calculate_zigzag_pivots(rates_df, length=ZIGZAG_LENGTH)
     print("Calcul terminé.")
@@ -98,20 +176,25 @@ print("\nPivots ZigZag détectés par la fonction Python:")
 if not zigzag_pivots:
     print("Aucun pivot détecté.")
 else:
-    for pivot in zigzag_pivots:
-        # Formatter le timestamp pour lisibilité (optionnel: convertir en heure locale si besoin)
-        # pivot_time_local = pivot['index'].tz_convert('Europe/Paris') # Exemple
+    # Afficher les 15-20 derniers pivots pour comparaison facile
+    start_index = max(0, len(zigzag_pivots) - 20)
+    print(f"(Affichage des {len(zigzag_pivots) - start_index} derniers pivots sur {len(zigzag_pivots)} détectés)")
+    for i in range(start_index, len(zigzag_pivots)):
+        pivot = zigzag_pivots[i]
         pivot_time_utc = pivot['index']
         print(f"- Time (UTC): {pivot_time_utc}, Price: {pivot['price']:.5f}, Type: {pivot['type']}, Status: {pivot['status']}")
 
 print("\n--- ACTION REQUISE ---")
-print("1. Ouvrez TradingView pour le symbole", SYMBOL, "en M1.")
-print("2. Affichez votre indicateur ZigZag (length=", ZIGZAG_LENGTH, ").")
-print("3. Comparez MANUELLEMENT les pivots affichés ci-dessus avec ceux visibles sur TradingView pour la période UTC:", start_time_utc, "à", end_time_utc)
-print("4. Vérifiez :")
-print("   - Le nombre de pivots correspond-il ?")
-print("   - Les timestamps (Date/Heure UTC) des pivots correspondent-ils ? (Attention aux fuseaux horaires !)")
-print("   - Les prix des pivots correspondent-ils ? (De petites différences dues aux flux de données sont possibles)")
-print("   - Le type (high/low) et le statut (HH/LL/...) correspondent-ils ?")
-print("5. Faites-moi part des résultats de votre comparaison (succès, échec, différences observées).")
+print(f"1. L'EA EA_AkobenConnector doit être actif sur un graphique MT5 (sous Wine).")
+print(f"2. Ouvrez TradingView pour {SYMBOL} en M1.")
+print(f"3. Affichez votre indicateur ZigZag (length={ZIGZAG_LENGTH}).")
+print(f"4. Comparez MANUELLEMENT les pivots affichés ci-dessus avec ceux visibles sur TradingView")
+print(f"   pour la période récente correspondant approximativement à :")
+if 'actual_start_time' in locals() and 'actual_end_time' in locals():
+      print(f"   {actual_start_time.strftime('%Y-%m-%d %H:%M:%S')} UTC à {actual_end_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+else:
+      print("   (Période non déterminée)")
+print(f"5. Concentrez-vous sur les 15-20 derniers pivots pour la comparaison.")
+print(f"6. Vérifiez la correspondance (Time UTC, Prix, Type, Statut HH/LL...).")
+print(f"7. Faites-moi part des résultats.")
 print("----------------------")
