@@ -140,7 +140,7 @@ if data_loaded_successfully:
     print("\n--- Simulation Détection Complète (Divergence + Trigger + Ordre) ---")
     potential_trades = [] # Pour stocker les trades simulés
     # Utiliser une fenêtre de vérification raisonnable (ex: les 100 dernières bougies)
-    check_window = min(100, len(rates_df))
+    check_window = len(rates_df) # Tester TOUTES les bougies disponibles
     if check_window > 0 and zigzag_pivots:
         print(f"Vérification des {check_window} dernières bougies disponibles...")
         check_df = rates_df.iloc[-check_window:]
